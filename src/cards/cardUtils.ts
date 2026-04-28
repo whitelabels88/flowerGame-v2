@@ -55,9 +55,9 @@ export function cardDetail(card: Card): string {
     case 'trade_present': return 'Trade Present starts a one-card exchange with another player.';
     case 'trade_fate': return 'Trade Fate swaps entire hands.';
     case 'let_go': return 'Let Go resolves a self-directed hand action.';
-    case 'spring': return 'Spring changes the season and supports free planting.';
-    case 'summer': return 'Summer changes the season and boosts drawing.';
-    case 'autumn': return 'Autumn changes the season and enables flower discard actions.';
+    case 'spring': return 'Spring changes the season and, if you leave Winter, draws cards immediately.';
+    case 'summer': return 'Summer changes the season and, if you leave Winter, draws cards immediately.';
+    case 'autumn': return 'Autumn changes the season and, if you leave Winter, draws cards immediately.';
     case 'winter': return 'Winter changes the season and reduces normal moves.';
     case 'natural_disaster': return 'Natural Disaster destroys a chosen vulnerable set.';
     case 'eclipse': return 'Eclipse reverses future turn direction.';

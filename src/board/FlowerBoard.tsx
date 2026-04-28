@@ -78,8 +78,8 @@ const MOVE_DETAILS: Record<string, { summary: string; steps: string[] }> = {
     steps: ['Pick the Let Go card.', 'Review the effect.', 'Confirm the play.'],
   },
   playSeason: {
-    summary: 'Change the current season by playing a season card.',
-    steps: ['Pick the season card you want to play.', 'Review the season effect.', 'Confirm to change the season.'],
+    summary: 'Change the current season by playing a season card. Leaving Winter now draws cards immediately for the new season.',
+    steps: ['Pick the season card you want to play.', 'Review the season effect and any immediate draw.', 'Confirm to change the season.'],
   },
   naturalDisaster: {
     summary: 'Destroy a chosen vulnerable garden set.',
