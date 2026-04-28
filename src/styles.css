@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap');
+
 /* ============================================================
    FLOWER GAME — GLOBAL STYLES
    Design tokens + responsive breakpoints.
@@ -26,6 +28,7 @@
   --card-chip-h: 76px;
   --radius: 12px;
   --radius-sm: 8px;
+  --font-playful: 'Fredoka', 'Trebuchet MS', 'Comic Sans MS', cursive;
 
   --safe-inset-b: env(safe-area-inset-bottom, 0px);
   --safe-inset-t: env(safe-area-inset-top, 0px);
@@ -750,7 +753,7 @@ input, select, textarea { font-family: inherit; }
 @media (pointer: coarse) {
   .card-chip { margin: 4px; }
   .card-chip.small { width: 40px; height: 54px; }
-  .garden-grid { gap: 8px; }
+  .garden-grid { gap: 0; }
   .garden-empty-slot { min-height: 72px; }
   .board-hero { gap: 12px; }
   .discard-fly-card {
@@ -1020,58 +1023,30 @@ input, select, textarea { font-family: inherit; }
   height: 92px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  place-items: center;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.96), rgba(255,214,122,0.72) 38%, rgba(255,126,182,0.58) 62%, rgba(142,107,255,0.7) 78%, rgba(46,34,84,0.9) 100%);
-  box-shadow: 0 0 0 6px rgba(255,255,255,0.18), 0 0 30px rgba(255,126,182,0.24), inset 0 0 16px rgba(255,255,255,0.5);
-  color: #51234b;
+  background: transparent;
+  box-shadow: none;
   z-index: 1;
-  overflow: hidden;
+  overflow: visible;
+  pointer-events: none;
 }
 
-.arena-core-rings {
-  position: absolute;
-  inset: 8px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.55);
-  box-shadow: inset 0 0 0 6px rgba(255,255,255,0.08), inset 0 0 0 14px rgba(255,255,255,0.06);
-  animation: vortex-spin 14s linear infinite;
-}
-
-.arena-core::before,
-.arena-core::after {
-  content: '';
-  position: absolute;
-  inset: 11px;
-  border-radius: 50%;
-  border: 1px dashed rgba(255,255,255,0.45);
-  opacity: 0.5;
-}
-
-.arena-core::after {
-  inset: 24px;
-  opacity: 0.3;
-}
-
-.arena-core-label {
-  font-size: 18px;
-  font-weight: 900;
+.arena-core-ui {
+  position: relative;
   z-index: 1;
-  line-height: 1;
+  width: 76px;
+  height: 76px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 16px rgba(255, 126, 182, 0.24));
 }
 
-.arena-core-count {
-  font-size: 16px;
-  font-weight: 900;
-  z-index: 1;
-  line-height: 1;
-}
-
-.arena-core-card {
-  display: none;
+.arena-core.is-urgent .arena-core-ui {
+  width: 82px;
+  height: 82px;
+  filter: drop-shadow(0 0 16px rgba(255, 90, 90, 0.32));
 }
 
 .player-garden {
@@ -1127,17 +1102,18 @@ input, select, textarea { font-family: inherit; }
 
 .garden-zone {
   position: absolute !important;
-  inset: 28px 4px 6px 4px;
+  inset: 28px 8px 10px 8px;
   display: flex;
-  flex-wrap: wrap;
-  align-content: center;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-content: stretch;
   justify-content: center;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   background: transparent !important;
   border: none !important;
   box-shadow: none;
-  padding: 2px !important;
+  padding: 2px 0 4px !important;
   overflow: hidden auto;
   scrollbar-width: none;
   z-index: 2;
@@ -1156,23 +1132,85 @@ input, select, textarea { font-family: inherit; }
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-content: center;
+  align-content: flex-start;
+  align-items: flex-start;
   gap: 0;
-  width: 100%;
-  max-width: 100%;
+  width: min(calc(100% - 30px), 168px);
+  max-width: min(calc(100% - 30px), 168px);
+  min-height: 100%;
+  padding-top: 8px;
+  margin: 0 auto;
+  transform: translateY(6px);
+}
+
+.garden-grid.is-empty {
+  position: relative;
+  justify-content: center;
+  align-items: center;
+  align-content: center;
+  padding-top: 0;
+  transform: none;
+}
+
+.garden-set-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 3px 5px;
+  border-radius: 10px;
+  border: 2px solid var(--garden-set-border, transparent);
+  background: var(--garden-set-bg, transparent);
+  filter: var(--garden-set-glow, none);
+  box-shadow: var(--garden-set-shadow, none);
+  min-height: 22px;
+  margin: 0 -9px -7px 0;
+  z-index: 1;
+}
+
+.garden-set-chip.size-lg {
+  padding: 4px 6px;
+}
+
+.garden-set-chip.size-xl {
+  padding: 4px 7px;
+}
+
+.garden-set-chip:hover,
+.garden-set-chip.is-highlighted,
+.garden-set-chip.is-drag-active {
+  z-index: 3;
 }
 
 .garden-empty-slot {
-  border: 1px dashed rgba(167, 108, 144, 0.26) !important;
-  border-radius: 16px;
+  border: none !important;
+  border-radius: 0;
   min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 8px;
-  background: rgba(255,255,255,0.56) !important;
+  padding: 0 12px;
+  background: transparent !important;
   color: #8b5b77 !important;
+  font-family: var(--font-playful);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.32);
+  width: min(132px, 80%);
+  margin: auto;
+}
+
+.garden-grid.is-empty .garden-empty-slot {
+  position: absolute;
+  left: 50%;
+  top: 57%;
+  width: min(124px, 74%);
+  margin: 0;
+  transform: translate(-50%, -50%);
 }
 
 .garden-density-spacious .card-chip { margin: 1px; }
@@ -1460,12 +1498,9 @@ input, select, textarea { font-family: inherit; }
   margin: 0 auto 4px;
 }
 
-.page.layout-compact .arena-core-label {
-  font-size: 14px;
-}
-
-.page.layout-compact .arena-core-count {
-  font-size: 13px;
+.page.layout-compact .arena-core-ui {
+  width: 58px;
+  height: 58px;
 }
 
 .page.layout-compact .player-garden {
@@ -1484,7 +1519,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .page.layout-compact .garden-zone {
-  inset: 28px 4px 6px 4px;
+  inset: 24px 8px 10px 8px;
 }
 
 .page.layout-compact .player-hand-row {
@@ -1539,7 +1574,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .page.layout-compact .player-garden .garden-zone {
-  inset: 28px 4px 6px 4px;
+  inset: 24px 8px 10px 8px;
 }
 
 .page.layout-compact .scroll-log {
@@ -1678,12 +1713,9 @@ input, select, textarea { font-family: inherit; }
     margin: 0 auto 4px;
   }
 
-  .arena-core-label {
-    font-size: 14px;
-  }
-
-  .arena-core-count {
-    font-size: 13px;
+  .arena-core-ui {
+    width: 58px;
+    height: 58px;
   }
 
   .player-garden {
@@ -1702,11 +1734,15 @@ input, select, textarea { font-family: inherit; }
   }
 
   .player-garden .garden-zone {
-    inset: 28px 4px 6px 4px;
+    inset: 22px 7px 10px 7px;
   }
 
   .garden-grid {
-    gap: 6px;
+    gap: 0;
+    width: min(calc(100% - 26px), 160px);
+    max-width: min(calc(100% - 26px), 160px);
+    padding-top: 6px;
+    transform: translateY(4px);
   }
 
   .player-hand-dock {
@@ -1826,6 +1862,13 @@ input, select, textarea { font-family: inherit; }
 
   .garden-empty-slot {
     min-height: 48px;
+    width: min(116px, 78%);
+    font-size: 13px;
+  }
+
+  .garden-grid.is-empty .garden-empty-slot {
+    width: min(112px, 74%);
+    top: 56%;
   }
 
   .player-hand-dock {
@@ -2151,7 +2194,7 @@ input, select, textarea { font-family: inherit; }
     position: relative !important;
     inset: auto !important;
     min-height: 94px;
-    padding: 30px 6px 8px !important;
+    padding: 28px 8px 10px !important;
     overflow-y: auto;
   }
 
@@ -2162,6 +2205,10 @@ input, select, textarea { font-family: inherit; }
 
   .v2-shell .garden-grid {
     align-content: flex-start;
+    width: min(calc(100% - 34px), 158px);
+    max-width: min(calc(100% - 34px), 158px);
+    padding-top: 6px;
+    transform: translateY(4px);
   }
 }
 

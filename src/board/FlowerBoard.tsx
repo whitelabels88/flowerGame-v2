@@ -11,7 +11,9 @@ import {
 } from '../cards/cardUtils';
 import { CardChip } from '../cards/CardChip';
 import { DEFAULT_CARD_ART } from '../cards/defaultCardArt';
-import greenGrassFieldGif from '../assets/garden/green-grass-field.gif';
+import gardenGrassGif from '../assets/garden/garden-grass.gif';
+import middleUiSlowGif from '../assets/garden/middle-ui-slow.gif';
+import middleUiFastGif from '../assets/garden/middle-ui-fast.gif';
 import { MatchContext } from '../matchContext';
 
 const MOVE_LABELS: Record<string, string> = {
@@ -378,13 +380,13 @@ function GardenBlob({
   return (
     <svg className="garden-blob-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <defs>
-        <pattern id={`blob-pattern-${seedValue}`} patternUnits="userSpaceOnUse" width="96" height="96">
+        <pattern id={`blob-pattern-${seedValue}`} patternUnits="objectBoundingBox" width="0.05" height="0.05">
           <image
-            href={greenGrassFieldGif}
+            href={gardenGrassGif}
             x="0"
             y="0"
-            width="96"
-            height="96"
+            width="1"
+            height="1"
             preserveAspectRatio="none"
           />
         </pattern>
@@ -561,16 +563,15 @@ function SetChip({
     <div
       ref={setRef}
       onClick={onClick}
+      className={['garden-set-chip', sizeClass, showBox ? 'has-frame' : '', highlight ? 'is-highlighted' : '', dragActive ? 'is-drag-active' : '']
+        .filter(Boolean)
+        .join(' ')}
       style={{
-        display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 1,
-        padding: sizeClass === 'size-xl' ? '4px 7px' : sizeClass === 'size-lg' ? '4px 6px' : '3px 5px',
-        borderRadius: 10,
-        border: showBox ? `2px solid ${highlight ? '#e94560' : 'rgba(78,204,163,0.6)'}` : '2px solid transparent',
-        background: dragActive ? 'rgba(78, 204, 163, 0.14)' : 'transparent',
+        ['--garden-set-border' as string]: showBox ? (highlight ? '#e94560' : 'rgba(78,204,163,0.6)') : 'transparent',
+        ['--garden-set-bg' as string]: dragActive ? 'rgba(78, 204, 163, 0.14)' : 'transparent',
+        ['--garden-set-shadow' as string]: highlight ? '0 0 10px #e94560' : 'none',
+        ['--garden-set-glow' as string]: glowColor && !showBox ? `drop-shadow(0 0 6px ${glowColor})` : 'none',
         cursor: onClick ? 'pointer' : 'default',
-        filter: glowColor && !showBox ? `drop-shadow(0 0 6px ${glowColor})` : 'none',
-        boxShadow: highlight ? '0 0 10px #e94560' : 'none',
-        minHeight: 22,
       }}
     >
       {visibleFlowers.map(f => {
@@ -2140,11 +2141,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     logOpen ? 'log-open' : '',
     sceneFx !== 'none' ? `scene-${sceneFx}` : '',
   ].filter(Boolean).join(' ');
+  const centerUiGif = turnRemainingSec > 0 && turnRemainingSec < 10 ? middleUiFastGif : middleUiSlowGif;
 
   return (
     <div className={shellClass} style={theme.pageStyle}>
       {/* Fixed overlays */}
-      <div className={`turn-aura ${turnRemainingSec <= 10 ? 'is-urgent' : ''} ${G.phase !== 'game_over' ? 'is-active' : ''}`} />
+      <div className={`turn-aura ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''} ${G.phase !== 'game_over' ? 'is-active' : ''}`} />
       {sceneFx !== 'none' && <div className={`scene-overlay scene-${sceneFx}`} aria-hidden="true" />}
       {discardFlyCard && (
         <div className="discard-fly-overlay" aria-hidden="true">
@@ -2217,7 +2219,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           <span style={{ color: theme.muted, fontSize: 11 }} title="Cards in draw pile">🂠 {G.drawPile.length}</span>
           <span style={{ color: theme.muted, fontSize: 11 }} title="Cards in discard pile">🗑 {G.discardPile.length}</span>
           <span style={{ color: theme.muted, fontSize: 11 }} title="Total game time">⌛ {totalTimerLabel}</span>
-          <span style={{ color: turnRemainingSec <= 10 ? '#e94560' : theme.muted, fontSize: 11 }}>⏱ {turnTimerLabel}</span>
+          <span style={{ color: turnRemainingSec > 0 && turnRemainingSec <= 10 ? '#e94560' : theme.muted, fontSize: 11 }}>⏱ {turnTimerLabel}</span>
         </div>
       </header>
 
@@ -2294,10 +2296,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
         {/* Arena */}
         <div ref={arenaRef} className="board-arena board-arena-radial">
-          <div className="arena-core">
-            <div className="arena-core-rings" />
-            <div className="arena-core-label">✳</div>
-            <div className="arena-core-count">{G.discardPile.length}</div>
+          <div className={`arena-core ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''}`} aria-hidden="true">
+            <img className="arena-core-ui" src={centerUiGif} alt="" />
           </div>
 
           {arenaLayout.map(layout => {
@@ -2366,16 +2366,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                   style={{ background: 'transparent', border: 'none' }}
                 >
                   <div
-                    className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''}`}
+                    className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''} ${player.garden.sets.length === 0 ? 'is-empty' : ''}`}
                   >
                     {player.garden.sets.length === 0
-                      ? <div className="garden-empty-slot" style={{ color: theme.muted, fontSize: 11, padding: '4px 0' }}
+                      ? <div className="garden-empty-slot"
                           onClick={canDropTarget && activeGardenCardId
                             ? () => stagePlayFromCard(activeGardenCardId, player.id, '')
                             : isMe && myTurn && G.phase === 'action'
                             ? () => { setMoveType('plantOwn'); setTargetSet(''); setStep('pick-card'); }
                             : undefined}>
-                          Tap/drop to plant
+                          Tap or drop a flower here
                         </div>
                       : player.garden.sets.map(s => (
                         <SetChip
@@ -2428,12 +2428,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         )}
 
         {/* Floating timer pill — above the action row */}
-        <div className={`v2-timer-pill ${turnRemainingSec <= 10 ? 'is-urgent' : ''}`}
+        <div className={`v2-timer-pill ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''}`}
           style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
           <span className="v2-timer-pill-name" style={{ color: theme.muted }}>
             {timerLabel}
           </span>
-          <span className="v2-timer-pill-clock" style={{ color: turnRemainingSec <= 10 ? '#e94560' : theme.text }}>
+          <span className="v2-timer-pill-clock" style={{ color: turnRemainingSec > 0 && turnRemainingSec <= 10 ? '#e94560' : theme.text }}>
             {turnTimerLabel}
           </span>
           {myTurn && G.phase === 'action' && (
