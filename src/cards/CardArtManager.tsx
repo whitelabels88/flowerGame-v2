@@ -9,6 +9,7 @@ import {
   cardArtKey, humanName, processImageFile, useCardArt,
   type CardArtKey,
 } from './cardArt';
+import { hasCustomArt } from './defaultCardArt';
 import { FLOWER_EMOJI, POWER_EMOJI } from './cardUtils';
 import type { Card, FlowerColor, PowerCardName } from '../types/gameTypes';
 
@@ -44,7 +45,7 @@ const ALL_KEYS: { label: string; keys: CardArtKey[] }[] = [
 ];
 
 export function CardArtManager({ onClose }: Props) {
-  const { store, setArt, clearAll, exportJSON, importJSON } = useCardArt();
+  const { store, getArt, setArt, clearAll, exportJSON, importJSON } = useCardArt();
   const [busyKey, setBusyKey] = useState<CardArtKey | null>(null);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -151,7 +152,8 @@ export function CardArtManager({ onClose }: Props) {
                   <CardTile
                     key={key}
                     cardKey={key}
-                    art={store[key]}
+                    art={getArt(key)}
+                    hasCustom={hasCustomArt(store, key)}
                     busy={busyKey === key}
                     onUpload={file => handleUpload(key, file)}
                     onClear={() => setArt(key, null)}
@@ -193,12 +195,13 @@ export function CardArtManager({ onClose }: Props) {
 interface CardTileProps {
   cardKey: CardArtKey;
   art: string | undefined;
+  hasCustom: boolean;
   busy: boolean;
   onUpload: (file: File | undefined) => void;
   onClear: () => void;
 }
 
-function CardTile({ cardKey, art, busy, onUpload, onClear }: CardTileProps) {
+function CardTile({ cardKey, art, hasCustom, busy, onUpload, onClear }: CardTileProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const name = humanName(cardKey);
 
@@ -220,7 +223,7 @@ function CardTile({ cardKey, art, busy, onUpload, onClear }: CardTileProps) {
         >
           {busy ? '…' : art ? 'Replace' : 'Upload'}
         </button>
-        {art && (
+        {hasCustom && (
           <button type="button" className="danger" onClick={onClear} disabled={busy}>
             Reset
           </button>

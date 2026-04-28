@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Card, FlowerColor, PowerCardName } from '../types/gameTypes';
+import { DEFAULT_CARD_ART } from './defaultCardArt';
 
 const STORAGE_KEY = 'flower-game:card-art:v1';
 
@@ -87,7 +88,7 @@ export function CardArtProvider({ children }: { children: ReactNode }) {
     writeToStorage(store);
   }, [store]);
 
-  const getArt = useCallback((key: CardArtKey) => store[key], [store]);
+  const getArt = useCallback((key: CardArtKey) => store[key] ?? DEFAULT_CARD_ART[key], [store]);
 
   const setArt = useCallback((key: CardArtKey, dataUrl: string | null) => {
     setStore(prev => {

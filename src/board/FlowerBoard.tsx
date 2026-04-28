@@ -10,7 +10,8 @@ import {
   cardLabel, cardName, isFlower, isPower, cardDetail, escapeRegExp,
 } from '../cards/cardUtils';
 import { CardChip } from '../cards/CardChip';
-import { CardArtManager } from '../cards/CardArtManager';
+import { DEFAULT_CARD_ART } from '../cards/defaultCardArt';
+import greenGrassFieldGif from '../assets/garden/green-grass-field.gif';
 import { MatchContext } from '../matchContext';
 
 const MOVE_LABELS: Record<string, string> = {
@@ -108,6 +109,31 @@ function moveDetails(type: string): { summary: string; steps: string[] } {
     summary: 'Play the selected card and follow the remaining prompts.',
     steps: ['Choose the needed card.', 'Choose any required targets.', 'Confirm the action.'],
   };
+}
+
+function flowerArt(color: FlowerColor): string | undefined {
+  return DEFAULT_CARD_ART[`flower:${color}`];
+}
+
+function InlineCardLabel({ card }: { card: Card }) {
+  if (card.kind === 'flower') {
+    const art = flowerArt(card.color);
+    return (
+      <span className="inline-card-label">
+        {art
+          ? <img src={art} alt={card.color} className="inline-flower-icon" />
+          : <span aria-hidden="true">{FLOWER_EMOJI[card.color] ?? '🌺'}</span>}
+        <span>{cardName(card)}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-card-label">
+      <span aria-hidden="true">{cardLabel(card)}</span>
+      <span>{cardName(card)}</span>
+    </span>
+  );
 }
 
 function playTurnChime() {
@@ -352,11 +378,16 @@ function GardenBlob({
   return (
     <svg className="garden-blob-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <defs>
-        <linearGradient id={`blob-grad-${seedValue}`} x1="10%" y1="10%" x2="90%" y2="90%">
-          <stop offset="0%" stopColor={accent} stopOpacity="0.96" />
-          <stop offset="55%" stopColor={accent2} stopOpacity="0.86" />
-          <stop offset="100%" stopColor={accent3} stopOpacity="0.76" />
-        </linearGradient>
+        <pattern id={`blob-pattern-${seedValue}`} patternUnits="userSpaceOnUse" width="96" height="96">
+          <image
+            href={greenGrassFieldGif}
+            x="0"
+            y="0"
+            width="96"
+            height="96"
+            preserveAspectRatio="none"
+          />
+        </pattern>
         <filter id={`blob-glow-${seedValue}`} x="-40%" y="-40%" width="180%" height="180%">
           <feGaussianBlur stdDeviation="3.5" result="blur" />
           <feColorMatrix
@@ -372,7 +403,11 @@ function GardenBlob({
         </filter>
       </defs>
       <path className="garden-blob-shadow" d={path} />
-      <path className="garden-blob-fill" d={path} fill={`url(#blob-grad-${seedValue})`} filter={`url(#blob-glow-${seedValue})`} />
+      <path
+        className="garden-blob-texture"
+        d={path}
+        fill={`url(#blob-pattern-${seedValue})`}
+      />
       <path className="garden-blob-line" d={path} />
     </svg>
   );
@@ -527,20 +562,27 @@ function SetChip({
       ref={setRef}
       onClick={onClick}
       style={{
-        display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 3,
-        padding: sizeClass === 'size-xl' ? '6px 10px' : sizeClass === 'size-lg' ? '5px 9px' : '4px 7px',
+        display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 1,
+        padding: sizeClass === 'size-xl' ? '4px 7px' : sizeClass === 'size-lg' ? '4px 6px' : '3px 5px',
         borderRadius: 10,
         border: showBox ? `2px solid ${highlight ? '#e94560' : 'rgba(78,204,163,0.6)'}` : '2px solid transparent',
         background: dragActive ? 'rgba(78, 204, 163, 0.14)' : 'transparent',
         cursor: onClick ? 'pointer' : 'default',
         filter: glowColor && !showBox ? `drop-shadow(0 0 6px ${glowColor})` : 'none',
         boxShadow: highlight ? '0 0 10px #e94560' : 'none',
-        minHeight: 28,
+        minHeight: 22,
       }}
     >
-      {visibleFlowers.map(f => (
-        <span key={f.id} title={f.color}>{FLOWER_EMOJI[f.color] ?? '🌺'}</span>
-      ))}
+      {visibleFlowers.map(f => {
+        const art = flowerArt(f.color);
+        return (
+          <span key={f.id} title={f.color} className="mini-flower-token">
+            {art
+              ? <img src={art} alt={f.color} />
+              : <span>{FLOWER_EMOJI[f.color] ?? '🌺'}</span>}
+          </span>
+        );
+      })}
       {hiddenFlowerCount > 0 && (
         <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.72)' }}>
           +{hiddenFlowerCount}
@@ -667,7 +709,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [blessingArranged, setBlessingArranged] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [designerOpen, setDesignerOpen] = useState(false);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const [pointerDragActive, setPointerDragActive] = useState(false);
@@ -1866,7 +1907,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {selectedCards.map(card => (
                   <div key={card.id} style={{ color: '#cbd5ff', fontSize: 13, lineHeight: 1.4 }}>
-                    <b>{cardLabel(card)} {cardName(card)}</b>
+                    <b><InlineCardLabel card={card} /></b>
                     <div style={{ color: '#9fb0ff', fontSize: 12 }}>{cardDetail(card)}</div>
                   </div>
                 ))}
@@ -1901,7 +1942,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 {['blue','purple','red','orange','yellow','green','black'].map(col => (
                   <button key={col} style={btn(chosenColor === col ? '#4ecca3' : '#333', chosenColor === col ? '#000' : '#fff')}
                     onClick={() => setChosenColor(col)}>
-                    {FLOWER_EMOJI[col]} {col}
+                    <span className="inline-card-label">
+                      {flowerArt(col as FlowerColor)
+                        ? <img src={flowerArt(col as FlowerColor)} alt={col} className="inline-flower-icon" />
+                        : <span aria-hidden="true">{FLOWER_EMOJI[col] ?? '🌺'}</span>}
+                      <span>{col}</span>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -1943,7 +1989,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(moveType)}</div>
             <p style={{ color: '#cbd5ff', fontSize: 13, margin: '0 0 8px 0' }}>{moveInfo.summary}</p>
             <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
-              Selected card{selectedCards.length === 1 ? '' : 's'}: {selectedCards.map(card => `${cardLabel(card)} ${cardName(card)}`).join(', ')}
+              Selected card{selectedCards.length === 1 ? '' : 's'}:{' '}
+              {selectedCards.map((card, index) => (
+                <span key={card.id}>
+                  {index > 0 ? ', ' : null}
+                  <InlineCardLabel card={card} />
+                </span>
+              ))}
             </div>
             <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
               {moveType === 'playBee' ? 'Next: choose whose garden Bee will plant into, then choose a set or start a new one.' : 'Next: choose a player, then finish any required target-set selection.'}
@@ -2002,10 +2054,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     }
 
     if (step === 'confirm') {
-      const cardNames = pickedCards.map(id => {
-        const c = me?.hand.find(c => c.id === id);
-        return c ? `${cardLabel(c)} ${cardName(c)}` : id;
-      });
+      const pickedCardObjects = pickedCards
+        .map(id => me?.hand.find(c => c.id === id))
+        .filter((card): card is Card => !!card);
       const tname = nameOf(G.players.find(p => p.id === targetPlayer));
       const beeDiscardCard = beeDiscardFlowers.find(c => c.id === discardChoice);
       return (
@@ -2022,11 +2073,19 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             Action: <b>{moveLabel(moveType)}</b>
           </p>
           <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>
-            Card(s): <b>{cardNames.join(', ')}</b>
+            Card(s):{' '}
+            <b>
+              {pickedCardObjects.map((card, index) => (
+                <span key={card.id}>
+                  {index > 0 ? ', ' : null}
+                  <InlineCardLabel card={card} />
+                </span>
+              ))}
+            </b>
           </p>
           {tname && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Target: <b>{tname}</b></p>}
           {moveType === 'playBee' && beeDiscardCard && (
-            <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Discard flower: <b>{cardName(beeDiscardCard)}</b></p>
+            <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Discard flower: <b><InlineCardLabel card={beeDiscardCard} /></b></p>
           )}
           {(moveType === 'plantOwn' || moveType === 'plantOpponent') && (() => {
             const tgtPlayer = moveType === 'plantOwn' ? me : G.players.find(p => p.id === targetPlayer);
@@ -2159,8 +2218,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           <span style={{ color: theme.muted, fontSize: 11 }} title="Cards in discard pile">🗑 {G.discardPile.length}</span>
           <span style={{ color: theme.muted, fontSize: 11 }} title="Total game time">⌛ {totalTimerLabel}</span>
           <span style={{ color: turnRemainingSec <= 10 ? '#e94560' : theme.muted, fontSize: 11 }}>⏱ {turnTimerLabel}</span>
-          <button className="icon-btn" style={{ fontSize: 11, padding: '2px 6px' }}
-            onClick={() => setDesignerOpen(true)} title="Customize card artwork">🎨</button>
         </div>
       </header>
 
@@ -2506,9 +2563,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         <button className="v2-footer-btn" style={{ color: theme.muted }} onClick={() => setModalOpen('rules')}>
           <span>📖</span><span className="v2-footer-label">Rules</span>
         </button>
-        <button className="v2-footer-btn" style={{ color: theme.muted }} onClick={() => setDesignerOpen(true)}>
-          <span>🎨</span><span className="v2-footer-label">Art</span>
-        </button>
         <a href="https://flowerbug.a133.mov" target="_blank" rel="noreferrer" className="v2-footer-btn" style={{ color: theme.muted }}>
           <span>🐛</span><span className="v2-footer-label">Report Bug</span>
         </a>
@@ -2553,9 +2607,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           </div>
         </div>
       )}
-
-      {designerOpen && <CardArtManager onClose={() => setDesignerOpen(false)} />}
-
       {showDisconnect && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9000,

@@ -911,6 +911,36 @@ input, select, textarea { font-family: inherit; }
 .card-chip.no-art { justify-content: center; }
 .card-chip.no-art .emoji { line-height: 1; }
 
+.inline-card-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+.inline-flower-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  image-rendering: auto;
+  vertical-align: middle;
+}
+
+.mini-flower-token {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.mini-flower-token img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+}
+
 /* small variant for opponent hand backs */
 .card-chip.small { width: 36px; height: 50px; font-size: 14px; margin: 2px; }
 
@@ -1048,7 +1078,7 @@ input, select, textarea { font-family: inherit; }
   position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -1073,8 +1103,8 @@ input, select, textarea { font-family: inherit; }
   transform: translate(1px, 2px);
 }
 
-.garden-blob-fill {
-  opacity: 0.95;
+.garden-blob-texture {
+  opacity: 0.58;
 }
 
 .garden-blob-line {
@@ -1103,7 +1133,7 @@ input, select, textarea { font-family: inherit; }
   align-content: center;
   justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   background: transparent !important;
   border: none !important;
   box-shadow: none;
@@ -1127,7 +1157,7 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap;
   justify-content: center;
   align-content: center;
-  gap: 3px;
+  gap: 0;
   width: 100%;
   max-width: 100%;
 }
@@ -1145,9 +1175,9 @@ input, select, textarea { font-family: inherit; }
   color: #8b5b77 !important;
 }
 
-.garden-density-spacious .card-chip { margin: 2px; }
-.garden-density-comfy .card-chip { margin: 2px; }
-.garden-density-compact .card-chip { margin: 1px; }
+.garden-density-spacious .card-chip { margin: 1px; }
+.garden-density-comfy .card-chip { margin: 1px; }
+.garden-density-compact .card-chip { margin: 0; }
 
 .page.theme-spring .card-chip {
   border-color: rgba(142, 107, 255, 0.28);
