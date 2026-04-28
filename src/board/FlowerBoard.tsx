@@ -4,7 +4,7 @@
 
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
-import type { GameState, Card, FlowerCard, GardenSet, Player } from '../types/gameTypes';
+import type { GameState, Card, FlowerCard, GardenSet, PendingAction, Player } from '../types/gameTypes';
 import {
   FLOWER_EMOJI, POWER_EMOJI, SEASON_COLOR,
   cardLabel, cardName, isFlower, isPower, cardDetail, escapeRegExp,
@@ -241,6 +241,14 @@ function setSizeClass(set: GardenSet): string {
   if (n >= 4) return 'size-lg';
   if (n >= 2) return 'size-md';
   return 'size-sm';
+}
+
+function describeGardenSet(set: GardenSet | null | undefined): string {
+  if (!set) return 'a garden set';
+  if (set.isDivine) return 'the Divine set';
+  const anchorFlower = set.flowers.find(f => f.color !== 'rainbow' && f.color !== 'triple_rainbow') ?? set.flowers[0];
+  const colorLabel = anchorFlower ? cardName(anchorFlower) : 'flower';
+  return `${set.flowers.length}-flower ${colorLabel} set`;
 }
 
 function gardenDensityClass(count: number): string {
@@ -481,6 +489,9 @@ function SetChip({
   const powerLabel = set.isDivine ? '👑' : set.isSolid ? '✦' : set.isComplete ? '✓' : `${set.flowers.length}/3`;
   const glowColor = highlight ? '#e94560' : set.isSolid ? '#ffd700' : set.isComplete ? '#4ecca3' : null;
   const showBox = highlight || dragActive;
+  const maxVisibleFlowers = sizeClass === 'size-xl' ? 6 : sizeClass === 'size-lg' ? 5 : 4;
+  const visibleFlowers = set.flowers.slice(0, maxVisibleFlowers);
+  const hiddenFlowerCount = Math.max(0, set.flowers.length - visibleFlowers.length);
   return (
     <div
       onClick={onClick}
@@ -498,9 +509,14 @@ function SetChip({
         minHeight: 28,
       }}
     >
-      {set.flowers.map(f => (
+      {visibleFlowers.map(f => (
         <span key={f.id} title={f.color}>{FLOWER_EMOJI[f.color] ?? '🌺'}</span>
       ))}
+      {hiddenFlowerCount > 0 && (
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.72)' }}>
+          +{hiddenFlowerCount}
+        </span>
+      )}
       <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', alignSelf: 'flex-end' }}>
         {powerLabel}
       </span>
@@ -529,6 +545,16 @@ interface ChatMessage {
 
 function formatChatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatElapsedClock(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected }: FlowerBoardProps) {
@@ -661,6 +687,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const previousDiscardCountRef = useRef<number>(G.discardPile.length);
   const previousGardenIdsRef = useRef<Record<string, string[]>>(snapshotGardenIds(G.players));
   const submitUnlockRef = useRef<number | null>(null);
+  const awaitingMoveResolutionRef = useRef<{
+    phase: GameState['phase'];
+    logLength: number;
+    movesRemaining: number;
+    handLength: number;
+    currentPlayerIndex: number;
+    pendingSelection: PendingAction['selectionKind'] | undefined;
+  } | null>(null);
   // Live ref to moves — allows effects to always call the latest proxy
   const movesRef = useRef(m);
   movesRef.current = m;
@@ -717,19 +751,32 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const amTarget  = G.pendingAction?.targetPlayerId === playerID;
   const inStage   = !!(ctx.activePlayers && playerID !== null && ctx.activePlayers[playerID!]);
   const opponents = G.players.filter(p => p.id !== playerID);
-  const beeDiscardFlowers = G.discardPile.filter((c): c is FlowerCard => c.kind === 'flower');
+  const beeDiscardFlowers = G.discardPile.filter((c): c is FlowerCard => c.kind === 'flower' && c.color !== 'triple_rainbow');
+  const drawPhaseSeason = G.drawPhaseSeason ?? G.season;
   const targetablePlayers = moveType === 'playBee' && me ? [me, ...opponents] : opponents;
   const hasNaturalDisasterTarget = opponents.some(p => p.garden.sets.some(s => !s.isDivine));
   const theme = getSeasonTheme(G.season);
   const turnStartedAt = G.turnStartedAt ?? Date.now();
   const turnTimeLimitSec = Math.max(90, G.turnTimeLimitSec ?? 0);
-  const turnDeadlineMs = turnStartedAt + (turnTimeLimitSec * 1000);
+  const counterStartedAt = G.phase === 'counter' ? G.pendingAction?.startedAt ?? null : null;
+  const counterTimeLimitSec = G.phase === 'counter' ? Math.max(1, G.pendingAction?.responseTimeLimitSec ?? 14) : null;
+  const turnDeadlineMs = counterStartedAt != null
+    ? counterStartedAt + (counterTimeLimitSec! * 1000)
+    : turnStartedAt + (turnTimeLimitSec * 1000);
   const turnRemainingSec = Math.max(0, Math.ceil((turnDeadlineMs - nowMs) / 1000));
   const turnTimerLabel = `${String(Math.floor(turnRemainingSec / 60)).padStart(2, '0')}:${String(turnRemainingSec % 60).padStart(2, '0')}`;
+  const totalTimerStartMs = G.gameStartedAt && G.gameStartedAt > 0 ? G.gameStartedAt : turnStartedAt;
+  const totalElapsedSec = Math.max(0, Math.floor((nowMs - totalTimerStartMs) / 1000));
+  const totalTimerLabel = formatElapsedClock(totalElapsedSec);
   const timerPlayerId = G.phase === 'counter' && G.pendingAction
     ? G.pendingAction.targetPlayerId
     : G.turnOrder[G.currentPlayerIndex];
   const activePlayer = G.players.find(p => p.id === timerPlayerId) ?? null;
+  const timerLabel = G.phase === 'counter'
+    ? `Waiting on ${activePlayer ? nameOf(activePlayer) : 'counter'}`
+    : myTurn
+      ? 'Your turn'
+      : nameOf(G.players.find(p => p.id === G.turnOrder[G.currentPlayerIndex]));
   const myHand = me?.hand ?? [];
   const isMobileLayout = viewport.width <= 720;
   // Use the actual playfield size (subtracting v2 shell chrome)
@@ -752,6 +799,15 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   }, []);
   const activeGardenPlayerId = hoverTargetPlayer || targetPlayer;
   const activeGardenSetId = hoverTargetSet || targetSet;
+  const attackedGardenPlayerId = G.phase === 'counter' ? G.pendingAction?.targetPlayerId ?? '' : '';
+  const attackedGardenSetId = G.phase === 'counter' ? G.pendingAction?.original.targetSetId ?? '' : '';
+  const attackedGardenPlayer = attackedGardenPlayerId
+    ? G.players.find(p => p.id === attackedGardenPlayerId) ?? null
+    : null;
+  const attackedGardenSet = attackedGardenPlayer && attackedGardenSetId
+    ? attackedGardenPlayer.garden.sets.find(set => set.id === attackedGardenSetId) ?? null
+    : null;
+  const attackedSetLabel = describeGardenSet(attackedGardenSet);
   const tetherLine = useMemo(() => {
     const sourceId = draggingCardId || armedCardId;
     const targetId = activeGardenPlayerId || targetPlayer;
@@ -878,17 +934,32 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     }
   }, [ctx.currentPlayer, G.currentPlayerIndex, G.phase, G.movesRemaining, G.log.length, G.pendingAction?.selectionKind]);
 
+  useEffect(() => {
+    const pending = awaitingMoveResolutionRef.current;
+    if (!pending) return;
+    const resolved =
+      pending.phase !== G.phase ||
+      pending.logLength !== G.log.length ||
+      pending.movesRemaining !== G.movesRemaining ||
+      pending.handLength !== (me?.hand.length ?? 0) ||
+      pending.currentPlayerIndex !== G.currentPlayerIndex ||
+      pending.pendingSelection !== G.pendingAction?.selectionKind;
+    if (!resolved) return;
+    awaitingMoveResolutionRef.current = null;
+    resetAll();
+  }, [G.currentPlayerIndex, G.log.length, G.movesRemaining, G.pendingAction?.selectionKind, G.phase, me?.hand.length]);
+
   // Winter draw auto-skip: engine correctly draws 0 cards for non-empty hands in winter.
   // Auto-trigger pass so players don't have to click a draw button that does nothing.
   // (Empty hand in winter still draws 7, so we keep the button visible for that case.)
   useEffect(() => {
-    if (!myTurn || G.phase !== 'draw' || G.season !== 'winter') return;
+    if (!myTurn || G.phase !== 'draw' || drawPhaseSeason !== 'winter') return;
     const myPlayer = G.players.find(p => p.id === playerID);
     if (!myPlayer || myPlayer.hand.length === 0) return;
     const timer = window.setTimeout(() => { movesRef.current.pass(); }, 350);
     return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTurn, G.phase, G.season, G.currentPlayerIndex, playerID]);
+  }, [myTurn, G.phase, drawPhaseSeason, G.currentPlayerIndex, playerID]);
 
   useEffect(() => {
     const previous = previousDiscardCountRef.current;
@@ -1146,12 +1217,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       .map(id => me?.hand.find(card => card.id === id))
       .filter((card): card is Card => !!card);
 
-    switch (moveType) {
+      switch (moveType) {
       case 'plantOwn':
-        runMove(() => m.plantOwn(c1, targetSet || undefined, chosenColor || undefined));
+        runMove(() => m.plantOwn(c1, targetSet, chosenColor || undefined));
         break;
       case 'plantOpponent':
-        runMove(() => m.plantOpponent(c1, targetPlayer, targetSet || undefined, chosenColor || undefined));
+        runMove(() => m.plantOpponent(c1, targetPlayer, targetSet, chosenColor || undefined));
         break;
       case 'playWindSingle':
         runMove(() => m.playWindSingle(c1, targetPlayer, targetSet));
@@ -1164,7 +1235,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         runMove(() => m.playBug(c1, targetPlayer, targetSet));
         break;
       case 'playBee':
-        runMove(() => m.playBee(c1, discardChoice, targetPlayer || playerID!, targetSet || undefined, chosenColor || undefined));
+        runMove(() => m.playBee(c1, discardChoice, targetPlayer || playerID!, targetSet, chosenColor || undefined));
         break;
       case 'doubleHappinessTake': {
         const dhCard = pickedHandCards.find(card => isPower(card, 'double_happiness'));
@@ -1211,7 +1282,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         setError('Unknown move');
         return;
     }
-    resetAll();
+    awaitingMoveResolutionRef.current = {
+      phase: G.phase,
+      logLength: G.log.length,
+      movesRemaining: G.movesRemaining,
+      handLength: me?.hand.length ?? 0,
+      currentPlayerIndex: G.currentPlayerIndex,
+      pendingSelection: G.pendingAction?.selectionKind,
+    };
   }
 
   // ── Action panel ──────────────────────────────────────────────
@@ -1235,6 +1313,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <p style={{ color: '#ccc', fontSize: 13, marginBottom: 12 }}>
               <b>{attacker}</b> played <b>{pa.original.type.replace(/_/g,' ')}</b> on you. {helper}
             </p>
+            {pa.original.targetSetId && (
+              <p style={{ color: '#ffcc80', fontSize: 12, marginBottom: 10 }}>
+                Targeted set: <b>{attackedSetLabel}</b>
+              </p>
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 12 }}>
               {(me?.hand ?? []).map(card => (
                 <CardChip
@@ -1270,6 +1353,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           <p style={{ color: '#ccc', fontSize: 13, marginBottom: 12 }}>
             <b>{attacker}</b> played <b>{pa.original.type.replace(/_/g,' ')}</b> on you.
           </p>
+          {pa.original.targetSetId && (
+            <p style={{ color: '#ffcc80', fontSize: 12, marginBottom: 12 }}>
+              Targeted set: <b>{attackedSetLabel}</b>
+            </p>
+          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button style={btn('#555')} onClick={() => runMove(() => m.allowAction())}>✅ Allow</button>
             {myWind.length > 0 &&
@@ -1301,6 +1389,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       return (
         <div style={{ background: '#1a1a2e', borderRadius: 12, padding: 16, marginTop: 12, color: '#888' }}>
           ⏳ Waiting for <b style={{ color: '#fff' }}>{tname}</b> to respond to your play…
+          {G.pendingAction?.original.targetSetId && (
+            <div style={{ color: '#ffcc80', fontSize: 12, marginTop: 8 }}>
+              Targeted set: <b>{attackedSetLabel}</b>
+            </div>
+          )}
         </div>
       );
     }
@@ -1570,7 +1663,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <div style={{ marginTop: 12 }}>
               <p style={{ color: '#aaa', fontSize: 13, marginBottom: 6 }}>Choose a flower from the discard pile:</p>
               {beeDiscardFlowers.length === 0 ? (
-                <p style={{ color: '#e94560', fontSize: 13 }}>No flower cards in the discard pile.</p>
+                <p style={{ color: '#e94560', fontSize: 13 }}>No eligible flower cards in the discard pile.</p>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap' }}>
                   {beeDiscardFlowers.map(card => (
@@ -1834,6 +1927,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         <div className="v2-header-right">
           <span style={{ color: theme.muted, fontSize: 11 }} title="Cards in draw pile">🂠 {G.drawPile.length}</span>
           <span style={{ color: theme.muted, fontSize: 11 }} title="Cards in discard pile">🗑 {G.discardPile.length}</span>
+          <span style={{ color: theme.muted, fontSize: 11 }} title="Total game time">⌛ {totalTimerLabel}</span>
           <span style={{ color: turnRemainingSec <= 10 ? '#e94560' : theme.muted, fontSize: 11 }}>⏱ {turnTimerLabel}</span>
           <button className="icon-btn" style={{ fontSize: 11, padding: '2px 6px' }}
             onClick={() => setDesignerOpen(true)} title="Customize card artwork">🎨</button>
@@ -2005,7 +2099,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                           key={s.id}
                           set={s}
                           sizeClass={setSizeClass(s)}
-                          highlight={targeting && activeGardenSetId === s.id}
+                          highlight={(targeting && activeGardenSetId === s.id) || (player.id === attackedGardenPlayerId && s.id === attackedGardenSetId)}
                           dragActive={activeGardenCardId !== null && canDropTarget}
                           onClick={canDropTarget && activeGardenCardId ? () => stagePlayFromCard(activeGardenCardId, player.id, s.id) : isMe && myTurn && G.phase === 'action' ? () => {
                             setTargetPlayer(player.id);
@@ -2054,7 +2148,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         <div className={`v2-timer-pill ${turnRemainingSec <= 10 ? 'is-urgent' : ''}`}
           style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
           <span className="v2-timer-pill-name" style={{ color: theme.muted }}>
-            {myTurn ? 'Your turn' : nameOf(G.players.find(p => p.id === G.turnOrder[G.currentPlayerIndex]))}
+            {timerLabel}
           </span>
           <span className="v2-timer-pill-clock" style={{ color: turnRemainingSec <= 10 ? '#e94560' : theme.text }}>
             {turnTimerLabel}
@@ -2127,7 +2221,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               </div>
             </>
           ) : G.phase === 'draw' && myTurn ? (
-            G.season === 'winter' && (me?.hand.length ?? 0) > 0
+            drawPhaseSeason === 'winter' && (me?.hand.length ?? 0) > 0
               ? <div style={{ fontSize: 11, color: theme.muted }}>❄️ No draw in winter…</div>
               : <button className="v2-move-btn" style={{ fontSize: 18 }} title="Draw cards" onClick={() => runMove(() => m.pass())}>🃏</button>
           ) : G.phase === 'blessing' && myTurn ? (
@@ -2218,7 +2312,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                   <div style={{ marginBottom: 10, fontSize: 13 }}>Match: <b>{matchCtx?.matchID ?? '—'}</b></div>
                   <div style={{ marginBottom: 10, fontSize: 13 }}>You: <b>{matchCtx?.playerName ?? playerID}</b></div>
                   <div style={{ marginBottom: 10, fontSize: 13 }}>Phase: <b>{G.phase}</b></div>
-                  <div style={{ marginBottom: 16, fontSize: 13 }}>Season: <b>{G.season ?? 'none'}</b></div>
+                  <div style={{ marginBottom: 10, fontSize: 13 }}>Season: <b>{G.season ?? 'none'}</b></div>
+                  <div style={{ marginBottom: 16, fontSize: 13 }}>Total time: <b>{totalTimerLabel}</b></div>
                   <button style={{ ...btn('#555'), fontSize: 12 }}
                     onClick={() => { void navigator.clipboard.writeText(matchCtx?.matchID ?? ''); }}>
                     📋 Copy Match ID

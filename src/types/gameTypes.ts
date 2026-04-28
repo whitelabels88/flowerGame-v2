@@ -155,12 +155,18 @@ export interface PendingAction {
   selectionKind?: 'double_happiness_take' | 'trade_present';
   /** Played attacking cards stored while counter window resolves */
   playedCards?: Card[];
+  /** Millisecond timestamp when the counter response window started */
+  startedAt?: number;
+  /** Server-enforced timeout for the counter response window */
+  responseTimeLimitSec?: number;
 }
 
 // ── Game State ───────────────────────────────────────────────
 
 export interface GameState {
   id: string;
+  /** Millisecond timestamp when the match was created */
+  gameStartedAt?: number;
   players: Player[];
   /** Ordered list of player IDs for turn management */
   turnOrder: string[];
@@ -171,6 +177,8 @@ export interface GameState {
   drawPile: Card[];
   discardPile: Card[];
   season: Season;
+  /** Season snapshot used for the current turn's draw/blessing flow */
+  drawPhaseSeason?: Season;
   /** Turns remaining before season expires (resets to 3 on new season) */
   seasonTurnsRemaining: number;
   /** Player ID currently holding God's Favourite, or null at game start */
