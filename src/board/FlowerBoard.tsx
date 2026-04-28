@@ -459,6 +459,31 @@ type WindFlight = {
   delayMs: number;
 };
 
+type DragPreview = {
+  cardId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type PointerDragSession = {
+  cardId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+  dragging: boolean;
+};
+
+type GardenDropHit = {
+  playerId: string;
+  setId: string;
+};
+
 function snapshotGardenIds(players: Player[]): Record<string, string[]> {
   return Object.fromEntries(players.map(player => [
     player.id,
@@ -481,15 +506,15 @@ function SetChip({
   onClick,
   highlight,
   sizeClass,
-  onDropCard,
   dragActive,
+  setRef,
 }: {
   set: GardenSet;
   onClick?: () => void;
   highlight?: boolean;
   sizeClass?: string;
-  onDropCard?: () => void;
   dragActive?: boolean;
+  setRef?: (node: HTMLDivElement | null) => void;
 }) {
   const powerLabel = set.isDivine ? '👑' : set.isSolid ? '✦' : set.isComplete ? '✓' : `${set.flowers.length}/3`;
   const glowColor = highlight ? '#e94560' : set.isSolid ? '#ffd700' : set.isComplete ? '#4ecca3' : null;
@@ -499,16 +524,15 @@ function SetChip({
   const hiddenFlowerCount = Math.max(0, set.flowers.length - visibleFlowers.length);
   return (
     <div
+      ref={setRef}
       onClick={onClick}
-      onDragOver={onDropCard ? (e) => { e.preventDefault(); } : undefined}
-      onDrop={onDropCard ? (e) => { e.preventDefault(); onDropCard(); } : undefined}
       style={{
         display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 3,
         padding: sizeClass === 'size-xl' ? '6px 10px' : sizeClass === 'size-lg' ? '5px 9px' : '4px 7px',
         borderRadius: 10,
         border: showBox ? `2px solid ${highlight ? '#e94560' : 'rgba(78,204,163,0.6)'}` : '2px solid transparent',
         background: dragActive ? 'rgba(78, 204, 163, 0.14)' : 'transparent',
-        cursor: onClick || onDropCard ? 'pointer' : 'default',
+        cursor: onClick ? 'pointer' : 'default',
         filter: glowColor && !showBox ? `drop-shadow(0 0 6px ${glowColor})` : 'none',
         boxShadow: highlight ? '0 0 10px #e94560' : 'none',
         minHeight: 28,
@@ -645,6 +669,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [designerOpen, setDesignerOpen] = useState(false);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [pointerDragActive, setPointerDragActive] = useState(false);
   const [armedCardId, setArmedCardId] = useState<string | null>(null);
 
   // ── V2 drawer / modal state ────────────────────────────────
@@ -686,8 +712,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     };
   }, []);
   const gardenRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const gardenSetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const handCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const arenaRef = useRef<HTMLDivElement | null>(null);
+  const dragSessionRef = useRef<PointerDragSession | null>(null);
+  const dragPreviewFrameRef = useRef<number | null>(null);
+  const pendingDragPreviewRef = useRef<DragPreview | null>(null);
+  const suppressCardClickRef = useRef<string | null>(null);
   const previousCurrentPlayerRef = useRef<string | null>(null);
   const previousDiscardCountRef = useRef<number>(G.discardPile.length);
   const previousGardenIdsRef = useRef<Record<string, string[]>>(snapshotGardenIds(G.players));
@@ -704,10 +735,48 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const movesRef = useRef(m);
   movesRef.current = m;
 
+  function gardenSetRefKey(playerId: string, setId: string) {
+    return `${playerId}::${setId}`;
+  }
+
+  function clearDropHover() {
+    setHoverTargetPlayer('');
+    setHoverTargetSet('');
+  }
+
+  function scheduleDragPreview(next: DragPreview | null) {
+    pendingDragPreviewRef.current = next;
+    if (dragPreviewFrameRef.current !== null) return;
+    dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
+      dragPreviewFrameRef.current = null;
+      setDragPreview(pendingDragPreviewRef.current);
+    });
+  }
+
+  function clearDragState() {
+    if (dragPreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPreviewFrameRef.current);
+      dragPreviewFrameRef.current = null;
+    }
+    pendingDragPreviewRef.current = null;
+    setDragPreview(null);
+    setDraggingCardId(null);
+    clearDropHover();
+  }
+
+  function suppressNextCardClick(cardId: string) {
+    suppressCardClickRef.current = cardId;
+    window.setTimeout(() => {
+      if (suppressCardClickRef.current === cardId) suppressCardClickRef.current = null;
+    }, 0);
+  }
+
   function resetAll() {
     setStep('menu'); setMoveType(''); setPickedCards([]);
-    setTargetPlayer(''); setTargetSet(''); setHoverTargetPlayer(''); setHoverTargetSet(''); setChosenColor(''); setDiscardChoice(''); setError('');
-    setArmedCardId(null); setDraggingCardId(null);
+    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setError('');
+    dragSessionRef.current = null;
+    setPointerDragActive(false);
+    setArmedCardId(null); clearDragState();
   }
 
   function resetBlessing() {
@@ -837,31 +906,82 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     const sourceId = draggingCardId || armedCardId;
     const targetId = activeGardenPlayerId || targetPlayer;
     if (!sourceId || !targetId) return null;
-    const sourceEl = handCardRefs.current[sourceId];
     const targetEl = gardenRefs.current[targetId];
-    if (!sourceEl || !targetEl) return null;
-    const s = sourceEl.getBoundingClientRect();
+    if (!targetEl) return null;
+    const sourceRect = dragPreview
+      ? { left: dragPreview.x, top: dragPreview.y, width: dragPreview.width, height: dragPreview.height }
+      : handCardRefs.current[sourceId]?.getBoundingClientRect();
+    if (!sourceRect) return null;
     const t = targetEl.getBoundingClientRect();
     return {
-      x1: s.left + (s.width / 2),
-      y1: s.top + (s.height / 2),
+      x1: sourceRect.left + (sourceRect.width / 2),
+      y1: sourceRect.top + (sourceRect.height / 2),
       x2: t.left + (t.width / 2),
       y2: t.top + (t.height / 2),
     };
-  }, [draggingCardId, armedCardId, activeGardenPlayerId, targetPlayer, G.players.length, G.log.length]);
+  }, [dragPreview, draggingCardId, armedCardId, activeGardenPlayerId, targetPlayer, G.players.length, G.log.length]);
 
-  function clearDragState() {
-    setDraggingCardId(null);
+  function hitTestGardenDrop(clientX: number, clientY: number): GardenDropHit | null {
+    for (const [key, setEl] of Object.entries(gardenSetRefs.current)) {
+      if (!setEl) continue;
+      const rect = setEl.getBoundingClientRect();
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue;
+      const [playerId, setId] = key.split('::');
+      if (playerId && typeof setId === 'string') return { playerId, setId };
+    }
+
+    for (const [playerId, gardenEl] of Object.entries(gardenRefs.current)) {
+      if (!gardenEl) continue;
+      const rect = gardenEl.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        return { playerId, setId: '' };
+      }
+    }
+
+    return null;
   }
 
-  function startCardDrag(cardId: string) {
-    setDraggingCardId(cardId);
-    setArmedCardId(cardId);
+  function updateDragHover(clientX: number, clientY: number) {
+    const hit = hitTestGardenDrop(clientX, clientY);
+    if (!hit) {
+      clearDropHover();
+      return null;
+    }
+    setHoverTargetPlayer(hit.playerId);
+    setHoverTargetSet(hit.setId);
+    return hit;
+  }
+
+  function startCardPointerSession(cardId: string, event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const sourceEl = handCardRefs.current[cardId];
+    if (!sourceEl) return;
+    const rect = sourceEl.getBoundingClientRect();
+    dragSessionRef.current = {
+      cardId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      dragging: false,
+    };
+    setPointerDragActive(true);
   }
 
   function armCard(cardId: string) {
     setError('');
     setArmedCardId(prev => prev === cardId ? null : cardId);
+  }
+
+  function handleHandCardClick(cardId: string) {
+    if (suppressCardClickRef.current === cardId) {
+      suppressCardClickRef.current = null;
+      return;
+    }
+    armCard(cardId);
   }
 
   function moveTypeFromCard(card: Card, targetPlayerId: string): string | null {
@@ -950,6 +1070,69 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     setNowMs(Date.now());
     const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!pointerDragActive) return undefined;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const session = dragSessionRef.current;
+      if (!session || event.pointerId !== session.pointerId) return;
+
+      const dx = event.clientX - session.startX;
+      const dy = event.clientY - session.startY;
+      if (!session.dragging) {
+        if (Math.hypot(dx, dy) < 10) return;
+        session.dragging = true;
+        setDraggingCardId(session.cardId);
+        setArmedCardId(session.cardId);
+      }
+
+      event.preventDefault();
+      scheduleDragPreview({
+        cardId: session.cardId,
+        x: event.clientX - session.offsetX,
+        y: event.clientY - session.offsetY,
+        width: session.width,
+        height: session.height,
+      });
+      updateDragHover(event.clientX, event.clientY);
+    };
+
+    const finishPointerSession = (event: PointerEvent) => {
+      const session = dragSessionRef.current;
+      if (!session || event.pointerId !== session.pointerId) return;
+
+      const wasDragging = session.dragging;
+      const dropTarget = wasDragging ? hitTestGardenDrop(event.clientX, event.clientY) : null;
+
+      dragSessionRef.current = null;
+      setPointerDragActive(false);
+      clearDragState();
+
+      if (!wasDragging) return;
+
+      suppressNextCardClick(session.cardId);
+      if (dropTarget) {
+        stagePlayFromCard(session.cardId, dropTarget.playerId, dropTarget.setId);
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', finishPointerSession);
+    window.addEventListener('pointercancel', finishPointerSession);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', finishPointerSession);
+      window.removeEventListener('pointercancel', finishPointerSession);
+    };
+  }, [pointerDragActive, stagePlayFromCard]);
+
+  useEffect(() => () => {
+    if (dragPreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPreviewFrameRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -1889,6 +2072,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     (myTurn && step !== 'menu' && G.phase === 'action') ||
     (myTurn && G.phase === 'blessing') ||
     (isCounter && amTarget && inStage);
+  const draggedHandCard = dragPreview ? myHand.find(card => card.id === dragPreview.cardId) ?? null : null;
 
   const shellClass = [
     'v2-shell page',
@@ -1921,6 +2105,20 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           </div>
         </div>
       ))}
+      {dragPreview && draggedHandCard && (
+        <div
+          className="drag-card-overlay"
+          aria-hidden="true"
+          style={{
+            left: dragPreview.x,
+            top: dragPreview.y,
+            width: dragPreview.width,
+            height: dragPreview.height,
+          } as React.CSSProperties}
+        >
+          <CardChip card={draggedHandCard} selected />
+        </div>
+      )}
       {tetherLine && (
         <svg className="tether-overlay" aria-hidden="true">
           <defs>
@@ -2079,10 +2277,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                   borderRadius: 0,
                 } as React.CSSProperties}
                 ref={(node) => { gardenRefs.current[player.id] = node; }}
-                onDragEnter={canDropTarget ? () => { setHoverTargetPlayer(player.id); } : undefined}
-                onDragOver={canDropTarget ? (e) => { e.preventDefault(); setHoverTargetPlayer(player.id); } : undefined}
-                onDragLeave={canDropTarget ? () => { if (hoverTargetPlayer === player.id) { setHoverTargetPlayer(''); setHoverTargetSet(''); } } : undefined}
-                onDrop={canDropTarget ? (e) => { e.preventDefault(); if (activeGardenCardId) stagePlayFromCard(activeGardenCardId, player.id, ''); } : undefined}
               >
                 <GardenBlob
                   seed={player.id}
@@ -2133,13 +2327,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                           sizeClass={setSizeClass(s)}
                           highlight={(targeting && activeGardenSetId === s.id) || (player.id === attackedGardenPlayerId && s.id === attackedGardenSetId)}
                           dragActive={activeGardenCardId !== null && canDropTarget}
+                          setRef={(node) => { gardenSetRefs.current[gardenSetRefKey(player.id, s.id)] = node; }}
                           onClick={canDropTarget && activeGardenCardId ? () => stagePlayFromCard(activeGardenCardId, player.id, s.id) : isMe && myTurn && G.phase === 'action' ? () => {
                             setTargetPlayer(player.id);
                             setTargetSet(s.id);
                             setMoveType('plantOwn');
                             setStep('pick-card');
                           } : undefined}
-                          onDropCard={canDropTarget && activeGardenCardId ? () => stagePlayFromCard(activeGardenCardId, player.id, s.id) : undefined}
                         />
                       ))
                     }
@@ -2285,20 +2479,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 <div
                   key={c.id}
                   ref={(node) => { handCardRefs.current[c.id] = node; }}
-                  className="hand-card-fan"
+                  className={`hand-card-fan ${draggingCardId === c.id ? 'is-drag-origin' : ''}`}
                   style={{ transform: `translateY(${Math.abs(i - mid) * 2}px) rotate(${(i - mid) * 4}deg)` }}
                 >
                   <CardChip
                     card={c}
                     selected={armedCardId === c.id || pickedCards.includes(c.id)}
                     draggable={canDrag}
-                    onClick={myTurn && G.phase === 'action' ? () => armCard(c.id) : undefined}
-                    onDragStart={canDrag ? (e) => {
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', c.id);
-                      startCardDrag(c.id);
-                    } : undefined}
-                    onDragEnd={canDrag ? () => clearDragState() : undefined}
+                    dragging={draggingCardId === c.id}
+                    onClick={myTurn && G.phase === 'action' ? () => handleHandCardClick(c.id) : undefined}
+                    onPointerDown={canDrag ? (event) => startCardPointerSession(c.id, event) : undefined}
                   />
                 </div>
               );

@@ -4,7 +4,7 @@
 // falling back to the emoji representation.
 // ============================================================
 
-import type { DragEventHandler } from 'react';
+import type { PointerEventHandler } from 'react';
 import type { Card } from '../types/gameTypes';
 import { cardLabel, cardName } from './cardUtils';
 import { cardArtKey, useCardArt } from './cardArt';
@@ -13,15 +13,15 @@ interface CardChipProps {
   card: Card | { id: string; kind: string };
   selected?: boolean;
   onClick?: () => void;
-  onDragStart?: DragEventHandler<HTMLDivElement>;
-  onDragEnd?: DragEventHandler<HTMLDivElement>;
+  onPointerDown?: PointerEventHandler<HTMLDivElement>;
   draggable?: boolean;
+  dragging?: boolean;
   dim?: boolean;
   small?: boolean;
   title?: string;
 }
 
-export function CardChip({ card, selected, onClick, onDragStart, onDragEnd, draggable, dim, small, title }: CardChipProps) {
+export function CardChip({ card, selected, onClick, onPointerDown, draggable, dragging, dim, small, title }: CardChipProps) {
   const { getArt } = useCardArt();
 
   // Opponent face-down card
@@ -53,6 +53,8 @@ export function CardChip({ card, selected, onClick, onDragStart, onDragEnd, drag
     'card-chip',
     onClick ? 'selectable' : '',
     selected ? 'selected' : '',
+    draggable ? 'draggable' : '',
+    dragging ? 'dragging' : '',
     dim ? 'dim' : '',
     small ? 'small' : '',
     art ? '' : 'no-art',
@@ -62,9 +64,8 @@ export function CardChip({ card, selected, onClick, onDragStart, onDragEnd, drag
     <div
       className={className}
       onClick={onClick}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      draggable={draggable}
+      onPointerDown={onPointerDown}
+      data-draggable={draggable ? 'true' : undefined}
       title={title ?? cardName(c)}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
