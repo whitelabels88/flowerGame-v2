@@ -4,7 +4,7 @@
 
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
-import type { GameState, Card, FlowerCard, GardenSet, PendingAction, Player } from '../types/gameTypes';
+import type { GameState, Card, FlowerCard, GardenSet, PendingAction, Player, FlowerColor } from '../types/gameTypes';
 import {
   FLOWER_EMOJI, POWER_EMOJI, SEASON_COLOR,
   cardLabel, cardName, isFlower, isPower, cardDetail, escapeRegExp,
@@ -249,6 +249,11 @@ function describeGardenSet(set: GardenSet | null | undefined): string {
   const anchorFlower = set.flowers.find(f => f.color !== 'rainbow' && f.color !== 'triple_rainbow') ?? set.flowers[0];
   const colorLabel = anchorFlower ? cardName(anchorFlower) : 'flower';
   return `${set.flowers.length}-flower ${colorLabel} set`;
+}
+
+function gardenSetColor(set: GardenSet): FlowerColor | null {
+  const anchorFlower = set.flowers.find(f => f.color !== 'rainbow' && f.color !== 'triple_rainbow');
+  return anchorFlower ? anchorFlower.color : null;
 }
 
 function gardenDensityClass(count: number): string {
@@ -808,6 +813,23 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     ? attackedGardenPlayer.garden.sets.find(set => set.id === attackedGardenSetId) ?? null
     : null;
   const attackedSetLabel = describeGardenSet(attackedGardenSet);
+  function resolvePlantTargetSetId(cardId: string, targetPlayerId: string, currentTargetSetId: string): string {
+    if (currentTargetSetId) return currentTargetSetId;
+
+    const card = me?.hand.find(c => c.id === cardId);
+    if (!card || !isFlower(card)) return currentTargetSetId;
+
+    const target = G.players.find(p => p.id === targetPlayerId);
+    if (!target) return currentTargetSetId;
+
+    const effectiveColor = card.isWildcard
+      ? chosenColor
+      : card.color;
+    if (!effectiveColor) return currentTargetSetId;
+
+    const fallbackSet = target.garden.sets.find(set => !set.isDivine && gardenSetColor(set) === effectiveColor);
+    return fallbackSet?.id ?? currentTargetSetId;
+  }
   const tetherLine = useMemo(() => {
     const sourceId = draggingCardId || armedCardId;
     const targetId = activeGardenPlayerId || targetPlayer;
@@ -861,11 +883,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (!card) return;
     const nextMove = moveTypeFromCard(card, targetPlayerId);
     if (!nextMove) return;
+    const resolvedTargetSetId = resolvePlantTargetSetId(cardId, targetPlayerId, targetSetId);
 
     setMoveType(nextMove);
     setPickedCards([card.id]);
     setTargetPlayer(targetPlayerId);
-    setTargetSet(targetSetId);
+    setTargetSet(resolvedTargetSetId);
     setChosenColor('');
     setDiscardChoice('');
     setError('');
@@ -1198,7 +1221,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     .map(id => me?.hand.find(card => card.id === id))
     .filter((card): card is Card => !!card);
   const selectedTargetPlayer = G.players.find(p => p.id === targetPlayer) ?? null;
-  const selectedTargetSet = selectedTargetPlayer?.garden.sets.find(set => set.id === targetSet) ?? null;
+  const effectiveTargetSetId = moveType === 'plantOwn' || moveType === 'plantOpponent' || moveType === 'playBee'
+    ? resolvePlantTargetSetId(pickedCards[0] ?? '', targetPlayer || playerID || '', targetSet)
+    : targetSet;
+  const selectedTargetSet = selectedTargetPlayer?.garden.sets.find(set => set.id === effectiveTargetSetId) ?? null;
   const moveInfo = moveDetails(moveType);
 
   function dispatch() {
@@ -1212,6 +1238,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       setError('Choose a color when Bee starts a new set');
       return;
     }
+    const resolvedTargetSet = (moveType === 'plantOwn' || moveType === 'plantOpponent' || moveType === 'playBee')
+      ? resolvePlantTargetSetId(c1, targetPlayer || playerID || '', targetSet)
+      : targetSet;
 
     const pickedHandCards = pickedCards
       .map(id => me?.hand.find(card => card.id === id))
@@ -1219,10 +1248,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
       switch (moveType) {
       case 'plantOwn':
-        runMove(() => m.plantOwn(c1, targetSet, chosenColor || undefined));
+        runMove(() => m.plantOwn(c1, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'plantOpponent':
-        runMove(() => m.plantOpponent(c1, targetPlayer, targetSet, chosenColor || undefined));
+        runMove(() => m.plantOpponent(c1, targetPlayer, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'playWindSingle':
         runMove(() => m.playWindSingle(c1, targetPlayer, targetSet));
@@ -1235,7 +1264,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         runMove(() => m.playBug(c1, targetPlayer, targetSet));
         break;
       case 'playBee':
-        runMove(() => m.playBee(c1, discardChoice, targetPlayer || playerID!, targetSet, chosenColor || undefined));
+        runMove(() => m.playBee(c1, discardChoice, targetPlayer || playerID!, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'doubleHappinessTake': {
         const dhCard = pickedHandCards.find(card => isPower(card, 'double_happiness'));
@@ -1822,17 +1851,17 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 <p style={{ fontSize: 13, color: '#aaa', marginBottom: 6 }}>Plant into which set?</p>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {sets.map(s => (
-                    <SetChip key={s.id} set={s} highlight={targetSet === s.id}
+                    <SetChip key={s.id} set={s} highlight={effectiveTargetSetId === s.id}
                       onClick={() => setTargetSet(s.id)} />
                   ))}
-                  <button style={{ ...btn(targetSet === '' ? '#4ecca3' : '#555', targetSet === '' ? '#1a1a2e' : '#fff'), fontSize: 11, padding: '3px 8px' }}
+                  <button style={{ ...btn(effectiveTargetSetId === '' ? '#4ecca3' : '#555', effectiveTargetSetId === '' ? '#1a1a2e' : '#fff'), fontSize: 11, padding: '3px 8px' }}
                     onClick={() => setTargetSet('')}>＋ New set</button>
                 </div>
               </div>
             );
           })()}
-          {moveType !== 'plantOwn' && moveType !== 'plantOpponent' && targetSet && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Set: <b>{selectedTargetSet ? `${selectedTargetSet.flowers.length} flower(s)` : 'selected ✓'}</b></p>}
-          {moveType === 'playBee' && !targetSet && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Set: <b>start new set</b></p>}
+          {moveType !== 'plantOwn' && moveType !== 'plantOpponent' && effectiveTargetSetId && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Set: <b>{selectedTargetSet ? `${selectedTargetSet.flowers.length} flower(s)` : 'selected ✓'}</b></p>}
+          {moveType === 'playBee' && !effectiveTargetSetId && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Set: <b>start new set</b></p>}
           {chosenColor && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Color: <b>{chosenColor}</b></p>}
           {error && <p style={{ color: '#e94560', fontSize: 13, marginBottom: 8 }}>⚠️ {error}</p>}
           <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
