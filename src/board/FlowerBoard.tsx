@@ -814,21 +814,24 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     : null;
   const attackedSetLabel = describeGardenSet(attackedGardenSet);
   function resolvePlantTargetSetId(cardId: string, targetPlayerId: string, currentTargetSetId: string): string {
-    if (currentTargetSetId) return currentTargetSetId;
-
     const card = me?.hand.find(c => c.id === cardId);
     if (!card || !isFlower(card)) return currentTargetSetId;
 
     const target = G.players.find(p => p.id === targetPlayerId);
     if (!target) return currentTargetSetId;
 
-    const effectiveColor = card.isWildcard
-      ? chosenColor
-      : card.color;
-    if (!effectiveColor) return currentTargetSetId;
+    if (!card.isWildcard) {
+      const fallbackSet = target.garden.sets.find(set => !set.isDivine && gardenSetColor(set) === card.color);
+      return fallbackSet?.id ?? '';
+    }
+
+    if (currentTargetSetId) return currentTargetSetId;
+
+    const effectiveColor = chosenColor;
+    if (!effectiveColor) return '';
 
     const fallbackSet = target.garden.sets.find(set => !set.isDivine && gardenSetColor(set) === effectiveColor);
-    return fallbackSet?.id ?? currentTargetSetId;
+    return fallbackSet?.id ?? '';
   }
   const tetherLine = useMemo(() => {
     const sourceId = draggingCardId || armedCardId;
