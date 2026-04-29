@@ -14,6 +14,8 @@ import { DEFAULT_CARD_ART } from '../cards/defaultCardArt';
 import gardenGrassGif from '../assets/garden/garden-grass.gif';
 import middleUiSlowGif from '../assets/garden/middle-ui-slow.gif';
 import middleUiFastGif from '../assets/garden/middle-ui-fast.gif';
+import swapLifeGif from '../assets/garden/swap-life.gif';
+import windBlowGif from '../assets/garden/wind-blow.gif';
 import { MatchContext } from '../matchContext';
 
 const MOVE_LABELS: Record<string, string> = {
@@ -496,6 +498,8 @@ type WindFlight = {
   delayMs: number;
 };
 
+type CardPlayEffect = 'none' | 'trade-fate' | 'wind-blow';
+
 type DragPreview = {
   cardId: string;
   x: number;
@@ -735,10 +739,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const prevLastMsgIdRef = useRef<Record<string, string>>({});
   const bubbleTimersRef = useRef<Record<string, number>>({});
   const arenaLogToastTimerRef = useRef<number | null>(null);
+  const cardPlayFxTimerRef = useRef<number | null>(null);
   const arenaLogToastPrimedRef = useRef(false);
   const [discardFlyCard, setDiscardFlyCard] = useState<Card | null>(null);
   const [windFlights, setWindFlights] = useState<WindFlight[]>([]);
   const [sceneFx, setSceneFx] = useState<'none' | 'eclipse' | 'reset'>('none');
+  const [cardPlayFx, setCardPlayFx] = useState<CardPlayEffect>('none');
   const [scenePulse, setScenePulse] = useState<string | null>(null);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
@@ -1283,6 +1289,18 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     const latestLog = G.log[G.log.length - 1] ?? '';
     const previousSnapshot = previousGardenIdsRef.current;
     const currentSnapshot = snapshotGardenIds(G.players);
+    const lowerLog = latestLog.toLowerCase();
+
+    const triggerCardPlayFx = (nextFx: CardPlayEffect) => {
+      if (cardPlayFxTimerRef.current !== null) {
+        window.clearTimeout(cardPlayFxTimerRef.current);
+      }
+      setCardPlayFx(nextFx);
+      cardPlayFxTimerRef.current = window.setTimeout(() => {
+        setCardPlayFx('none');
+        cardPlayFxTimerRef.current = null;
+      }, 750);
+    };
 
     const isWindLog = /wind/i.test(latestLog) && /(blew|blow|counter wind)/i.test(latestLog);
     if (isWindLog) {
@@ -1330,6 +1348,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       }
     }
 
+    if (/trade fate|swapped (their|the) entire hand|swap(?:ped)? .*whole hand|whole hand swap|swapped hands/.test(lowerLog)) {
+      triggerCardPlayFx('trade-fate');
+    } else if (/wind/.test(lowerLog) && /(played|blew|blow|counter)/.test(lowerLog)) {
+      triggerCardPlayFx('wind-blow');
+    }
+
     if (/eclipse/i.test(latestLog)) {
       setSceneFx('eclipse');
       window.setTimeout(() => setSceneFx('none'), 2000);
@@ -1349,6 +1373,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   useEffect(() => () => {
     if (submitUnlockRef.current !== null) {
       window.clearTimeout(submitUnlockRef.current);
+    }
+    if (cardPlayFxTimerRef.current !== null) {
+      window.clearTimeout(cardPlayFxTimerRef.current);
     }
   }, []);
 
@@ -2268,12 +2295,22 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     sceneFx !== 'none' ? `scene-${sceneFx}` : '',
   ].filter(Boolean).join(' ');
   const centerUiGif = turnRemainingSec > 0 && turnRemainingSec < 10 ? middleUiFastGif : middleUiSlowGif;
+  const cardPlayFxSrc = cardPlayFx === 'trade-fate'
+    ? swapLifeGif
+    : cardPlayFx === 'wind-blow'
+      ? windBlowGif
+      : null;
 
   return (
     <div className={shellClass} style={theme.pageStyle}>
       {/* Fixed overlays */}
       <div className={`turn-aura ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''} ${G.phase !== 'game_over' ? 'is-active' : ''}`} />
       {sceneFx !== 'none' && <div className={`scene-overlay scene-${sceneFx}`} aria-hidden="true" />}
+      {cardPlayFxSrc && (
+        <div className={`card-play-fx card-play-fx--${cardPlayFx}`} aria-hidden="true">
+          <img src={cardPlayFxSrc} alt="" className="card-play-fx__image" />
+        </div>
+      )}
       {discardFlyCard && (
         <div className="discard-fly-overlay" aria-hidden="true">
           <div className="discard-fly-card"><CardChip card={discardFlyCard} /></div>
