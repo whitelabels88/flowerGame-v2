@@ -26,6 +26,7 @@ const MOVE_LABELS: Record<string, string> = {
   playWindDouble: '💨💨 Wind ×2',
   playBug: '🐛 Bug',
   playBee: '🐝 Bee',
+  doubleHappiness: '🎉 Double Happiness',
   doubleHappinessTake: '🎉 Double Happiness — Take',
   doubleHappinessGive: '🎉 Double Happiness — Give',
   tradePresent: '🎁 Trade Present',
@@ -62,6 +63,10 @@ const MOVE_DETAILS: Record<string, { summary: string; steps: string[] }> = {
   playBee: {
     summary: 'Bee uses a flower from the discard pile and plants it into a chosen garden.',
     steps: ['Pick the Bee card.', 'Pick 1 flower from the discard pile.', 'Choose whose garden to plant into, then choose a set or start a new one.'],
+  },
+  doubleHappiness: {
+    summary: 'Choose a target player, then decide whether you will take 2 cards from them or give them 2 cards from your hand.',
+    steps: ['Pick the Double Happiness card.', 'Choose the target player.', 'Choose Take 2 or Give 2 before confirming.'],
   },
   doubleHappinessTake: {
     summary: 'Target a player and make them choose which 2 cards to give you.',
@@ -746,6 +751,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [chosenColor, setChosenColor] = useState('');
   const [discardChoice, setDiscardChoice] = useState('');
   const [windAttackDoubleMode, setWindAttackDoubleMode] = useState(false);
+  const [doubleHappinessMode, setDoubleHappinessMode] = useState<'take' | 'give' | ''>('');
   const [counterPickedCards, setCounterPickedCards] = useState<string[]>([]);
   const [error, setError] = useState('');
 
@@ -872,7 +878,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   function resetAll() {
     setStep('menu'); setMoveType(''); setPickedCards([]);
-    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setWindAttackDoubleMode(false); setError('');
+    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setWindAttackDoubleMode(false); setDoubleHappinessMode(''); setError('');
     dragSessionRef.current = null;
     setPointerDragActive(false);
     setArmedCardId(null); clearDragState();
@@ -892,6 +898,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   function selectionLimit(type: string): number {
     if (type === 'playWindDouble') return 2;
+    if (type === 'doubleHappiness') return 1;
     if (type === 'doubleHappinessGive') return 3;
     if (type === 'tradePresent') return 2;
     return 1;
@@ -968,7 +975,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const canUpgradeSingleWind = !!selectedPrimaryWindCard && !!autoDoubleWindCard;
   const effectiveMoveType = moveType === 'playWindSingle' && windAttackDoubleMode && canUpgradeSingleWind
     ? 'playWindDouble'
-    : moveType;
+    : moveType === 'doubleHappiness'
+      ? doubleHappinessMode === 'give'
+        ? 'doubleHappinessGive'
+        : doubleHappinessMode === 'take'
+          ? 'doubleHappinessTake'
+          : moveType
+      : moveType;
   const isWindCounterWindow = isCounter
     && amTarget
     && inStage
@@ -1144,7 +1157,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (isPower(card, 'wind')) return targetPlayerId === playerID ? null : 'playWindSingle';
     if (isPower(card, 'bug')) return targetPlayerId === playerID ? null : 'playBug';
     if (isPower(card, 'bee')) return 'playBee';
-    if (isPower(card, 'double_happiness')) return targetPlayerId === playerID ? 'doubleHappinessGive' : 'doubleHappinessTake';
+    if (isPower(card, 'double_happiness')) return targetPlayerId === playerID ? null : 'doubleHappiness';
     if (isPower(card, 'trade_present')) return targetPlayerId === playerID ? null : 'tradePresent';
     if (isPower(card, 'trade_fate')) return targetPlayerId === playerID ? null : 'tradeFate';
     if (isPower(card, 'let_go')) return 'letGo';
@@ -1179,6 +1192,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     setTargetSet(resolvedTargetSetId);
     setChosenColor('');
     setDiscardChoice('');
+    setDoubleHappinessMode('');
     setError('');
     setArmedCardId(card.id);
 
@@ -1189,8 +1203,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       return;
     }
 
-    if (nextMove === 'playBee' || nextMove === 'doubleHappinessGive' || nextMove === 'tradePresent') {
+    if (nextMove === 'playBee' || nextMove === 'tradePresent') {
       setStep('pick-card');
+      clearDragState();
+      return;
+    }
+
+    if (nextMove === 'doubleHappiness') {
+      setStep('pick-target');
       clearDragState();
       return;
     }
@@ -1228,6 +1248,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       setWindAttackDoubleMode(false);
     }
   }, [moveType, windAttackDoubleMode]);
+
+  useEffect(() => {
+    if (moveType !== 'doubleHappiness' && doubleHappinessMode) {
+      setDoubleHappinessMode('');
+    }
+  }, [moveType, doubleHappinessMode]);
 
   useEffect(() => {
     if (moveType === 'playWindSingle' && windAttackDoubleMode && !canUpgradeSingleWind) {
@@ -1668,6 +1694,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (type === 'playWindDouble') return hand.filter(c => isPower(c, 'wind'));
     if (type === 'playBug')     return hand.filter(c => isPower(c, 'bug'));
     if (type === 'playBee')     return hand.filter(c => isPower(c, 'bee'));
+    if (type === 'doubleHappiness') return hand.filter(c => isPower(c, 'double_happiness'));
     if (type === 'doubleHappinessTake') return hand.filter(c => isPower(c, 'double_happiness'));
     if (type === 'doubleHappinessGive') return hand;
     if (type === 'tradePresent') return hand;
@@ -1684,7 +1711,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   const needsTargetPlayer = [
     'plantOpponent','playWindSingle','playWindDouble','playBug','playBee',
-    'naturalDisaster','tradePresent','tradeFate','doubleHappinessTake','doubleHappinessGive',
+    'naturalDisaster','tradePresent','tradeFate','doubleHappiness','doubleHappinessTake','doubleHappinessGive',
   ].includes(moveType);
 
   const requiresTargetSet = ['playWindSingle','playWindDouble','playBug','naturalDisaster'].includes(moveType);
@@ -1713,6 +1740,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (!c1) { setError('Select a card first'); return; }
     if (needsTargetPlayer && !targetPlayer) { setError('Select a target player'); return; }
     if (requiresTargetSet && !targetSet) { setError('Select a target set'); return; }
+    if (moveType === 'doubleHappiness' && !doubleHappinessMode) { setError('Choose whether Double Happiness will Take 2 or Give 2.'); return; }
     if (moveType === 'playBee' && !discardChoice) { setError('Select a flower from the discard pile'); return; }
     if (moveType === 'playBee' && !targetSet && !chosenColor) {
       setError('Choose a color when Bee starts a new set');
@@ -2115,13 +2143,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             {hasFlower && <button style={btn()} onClick={() => { setMoveType('plantOwn'); setStep('pick-card'); }}>🌱 Plant (own)</button>}
             {hasFlower && opponents.length > 0 && <button style={btn()} onClick={() => { setMoveType('plantOpponent'); setStep('pick-card'); }}>🌿 Plant (opponent)</button>}
             {has('wind') && <button style={btn()} onClick={() => { setMoveType('playWindSingle'); setStep('pick-card'); }}>💨 Wind ×1</button>}
-            {has('wind') && hand.filter(c => isPower(c,'wind')).length >= 2 && (
-              <button style={btn()} onClick={() => { setMoveType('playWindDouble'); setStep('pick-card'); }}>💨💨 Wind ×2</button>
-            )}
             {has('bug') && <button style={btn()} onClick={() => { setMoveType('playBug'); setStep('pick-card'); }}>🐛 Bug</button>}
             {has('bee') && <button style={btn()} onClick={() => { setMoveType('playBee'); setStep('pick-card'); }}>🐝 Bee</button>}
-            {has('double_happiness') && <button style={btn()} onClick={() => { setMoveType('doubleHappinessTake'); setStep('pick-card'); }}>🎉 DH Take</button>}
-            {has('double_happiness') && <button style={btn()} onClick={() => { setMoveType('doubleHappinessGive'); setStep('pick-card'); }}>🎉 DH Give</button>}
+            {has('double_happiness') && <button style={btn()} onClick={() => { setMoveType('doubleHappiness'); setStep('pick-card'); }}>🎉 Double Happiness</button>}
             {has('trade_present') && <button style={btn()} onClick={() => { setMoveType('tradePresent'); setStep('pick-card'); }}>🎁 Trade Present</button>}
             {has('trade_fate') && <button style={btn()} onClick={() => { setMoveType('tradeFate'); setStep('pick-card'); }}>🔀 Trade Fate</button>}
             {has('let_go') && <button style={btn()} onClick={() => { setMoveType('letGo'); setStep('pick-card'); }}>✋ Let Go</button>}
@@ -2144,6 +2168,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       const cards = relevantCards(moveType);
       const maxCards = selectionLimit(moveType);
       const helperText =
+        moveType === 'doubleHappiness' ? 'Select the Double Happiness card:' :
         moveType === 'doubleHappinessGive' ? 'Select Double Happiness + 2 cards to give:' :
         moveType === 'tradePresent' ? 'Select Trade Present + 1 card to offer:' :
         maxCards > 1 ? `Select up to ${maxCards} cards:` : 'Select a card to play:';
@@ -2163,9 +2188,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             </ul>
           </div>
           <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>{helperText}</p>
-          {(moveType === 'doubleHappinessTake' || moveType === 'tradePresent') && (
+          {(moveType === 'doubleHappiness' || moveType === 'doubleHappinessTake' || moveType === 'tradePresent') && (
             <p style={{ color: '#888', fontSize: 12, marginTop: -4, marginBottom: 10 }}>
-              After you confirm, the target player will choose their own card(s).
+              {moveType === 'tradePresent'
+                ? 'After you confirm, the target player will choose their own card.'
+                : 'If you use Take 2, the target player will choose which card(s) they give you after you confirm.'}
             </p>
           )}
           {cards.length === 0 ? (
@@ -2255,6 +2282,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       const tgt = G.players.find(p => p.id === targetPlayer);
       const showSetPicker = ['playWindSingle','playWindDouble','playBug','naturalDisaster','playBee'].includes(moveType);
       const validSets = !tgt ? [] : tgt.garden.sets.filter(s => isValidTargetSetForMove(effectiveMoveType, s));
+      const selectedDhCard = moveType === 'doubleHappiness'
+        ? selectedCards.find(card => isPower(card, 'double_happiness')) ?? null
+        : null;
+      const doubleHappinessGiveCards = moveType === 'doubleHappiness'
+        ? selectedCards.filter(card => !isPower(card, 'double_happiness'))
+        : [];
+      const canAdvanceFromTarget = !!targetPlayer
+        && (!requiresTargetSet || !!targetSet)
+        && (moveType !== 'doubleHappiness'
+          || (!!doubleHappinessMode && (doubleHappinessMode !== 'give' || doubleHappinessGiveCards.length === 2)));
 
       return (
         <div style={{ background: '#16213e', borderRadius: 12, padding: 16, marginTop: 12 }}>
@@ -2307,6 +2344,72 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               </div>
             </div>
           )}
+          {moveType === 'doubleHappiness' && (
+            <div style={{ background: '#1a1a2e', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <div style={{ color: '#fff', fontWeight: 700, marginBottom: 8 }}>Double Happiness mode</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                <button
+                  style={btn(doubleHappinessMode === 'take' ? '#4ecca3' : '#333', doubleHappinessMode === 'take' ? '#1a1a2e' : '#fff')}
+                  onClick={() => {
+                    setDoubleHappinessMode('take');
+                    setPickedCards(prev => prev.slice(0, 1));
+                  }}
+                >
+                  🎉 Take 2 from target
+                </button>
+                <button
+                  style={btn(doubleHappinessMode === 'give' ? '#4ecca3' : '#333', doubleHappinessMode === 'give' ? '#1a1a2e' : '#fff')}
+                  onClick={() => setDoubleHappinessMode('give')}
+                >
+                  🎁 Give 2 to target
+                </button>
+              </div>
+              <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
+                {doubleHappinessMode === 'take'
+                  ? 'The target will choose which 2 cards they give you after you confirm.'
+                  : doubleHappinessMode === 'give'
+                    ? 'Choose the 2 cards from your own hand that you want to send to the target.'
+                    : 'Choose whether this Double Happiness will take cards from the target or give cards to them.'}
+              </div>
+              {doubleHappinessMode === 'give' && selectedDhCard && (
+                <div style={{ marginTop: 12 }}>
+                  <p style={{ color: '#aaa', fontSize: 13, marginBottom: 8 }}>
+                    Select 2 extra cards to give:
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                    {myHand.filter(card => card.id !== selectedDhCard.id).map(card => {
+                      const isSelected = pickedCards.includes(card.id);
+                      const giveCount = doubleHappinessGiveCards.length;
+                      const canSelect = isSelected || giveCount < 2;
+                      return (
+                        <CardChip
+                          key={card.id}
+                          card={card}
+                          selected={isSelected}
+                          dim={!canSelect}
+                          onClick={() => {
+                            if (!canSelect) return;
+                            setPickedCards(prev => {
+                              const base = prev.slice(0, 1);
+                              const extras = prev.slice(1);
+                              if (extras.includes(card.id)) {
+                                return [...base, ...extras.filter(id => id !== card.id)];
+                              }
+                              if (extras.length >= 2) return prev;
+                              return [...base, ...extras, card.id];
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div style={{ color: '#9fb0ff', fontSize: 12, marginTop: 8 }}>
+                    Selected to give: <b style={{ color: '#fff' }}>{doubleHappinessGiveCards.length}</b> / 2
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>
             {moveType === 'playBee' ? 'Choose whose garden Bee will plant into:' : 'Who do you want to target?'}
           </p>
@@ -2349,7 +2452,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             </div>
           )}
 
-          {targetPlayer && (!requiresTargetSet || !!targetSet) && (
+          {canAdvanceFromTarget && (
             <button style={btn('#4ecca3', '#1a1a2e')} onClick={() => setStep('confirm')}>
               Next →
             </button>
@@ -2877,11 +2980,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 {hasFlower && <button className="v2-move-btn" title="Plant (own)" onClick={() => { setMoveType('plantOwn'); setStep('pick-card'); }}>🌱</button>}
                 {hasFlower && opponents.length > 0 && <button className="v2-move-btn" title="Plant (opponent)" onClick={() => { setMoveType('plantOpponent'); setStep('pick-card'); }}>🌿</button>}
                 {has('wind') && <button className="v2-move-btn" title="Wind ×1" onClick={() => { setMoveType('playWindSingle'); setStep('pick-card'); }}>💨</button>}
-                {has('wind') && hand.filter(c => isPower(c,'wind')).length >= 2 && <button className="v2-move-btn" title="Wind ×2" onClick={() => { setMoveType('playWindDouble'); setStep('pick-card'); }}>💨💨</button>}
                 {has('bug') && <button className="v2-move-btn" title="Bug" onClick={() => { setMoveType('playBug'); setStep('pick-card'); }}>🐛</button>}
                 {has('bee') && <button className="v2-move-btn" title="Bee" onClick={() => { setMoveType('playBee'); setStep('pick-card'); }}>🐝</button>}
-                {has('double_happiness') && <button className="v2-move-btn" title="DH Take" onClick={() => { setMoveType('doubleHappinessTake'); setStep('pick-card'); }}>🎉</button>}
-                {has('double_happiness') && <button className="v2-move-btn" title="DH Give" onClick={() => { setMoveType('doubleHappinessGive'); setStep('pick-card'); }}>🎉↓</button>}
+                {has('double_happiness') && <button className="v2-move-btn" title="Double Happiness" onClick={() => { setMoveType('doubleHappiness'); setStep('pick-card'); }}>🎉</button>}
                 {has('trade_present') && <button className="v2-move-btn" title="Trade Present" onClick={() => { setMoveType('tradePresent'); setStep('pick-card'); }}>🎁</button>}
                 {has('trade_fate') && <button className="v2-move-btn" title="Trade Fate" onClick={() => { setMoveType('tradeFate'); setStep('pick-card'); }}>🔀</button>}
                 {has('let_go') && <button className="v2-move-btn" title="Let Go" onClick={() => { setMoveType('letGo'); setStep('pick-card'); }}>✋</button>}
