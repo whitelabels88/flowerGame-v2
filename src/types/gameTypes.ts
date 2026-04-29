@@ -153,6 +153,8 @@ export interface PendingAction {
   coinFlipResult?: 'heads' | 'tails';
   /** If set, the target must choose card(s) before the action resolves. */
   selectionKind?: 'double_happiness_take' | 'trade_present';
+  /** Trade Present temporarily reveals the offered card to the target. */
+  offeredCard?: Card;
   /** Played attacking cards stored while counter window resolves */
   playedCards?: Card[];
   /** Millisecond timestamp when the counter response window started */

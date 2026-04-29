@@ -714,6 +714,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const [pointerDragActive, setPointerDragActive] = useState(false);
   const [armedCardId, setArmedCardId] = useState<string | null>(null);
+  const [counterTrayHot, setCounterTrayHot] = useState(false);
+  const [arenaLogToast, setArenaLogToast] = useState<{ key: string; text: string } | null>(null);
 
   // ── V2 drawer / modal state ────────────────────────────────
   const [chatOpen, setChatOpen] = useState(false);
@@ -732,6 +734,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [chatBubbles, setChatBubbles] = useState<Record<string, { text: string; key: string }>>({});
   const prevLastMsgIdRef = useRef<Record<string, string>>({});
   const bubbleTimersRef = useRef<Record<string, number>>({});
+  const arenaLogToastTimerRef = useRef<number | null>(null);
+  const arenaLogToastPrimedRef = useRef(false);
   const [discardFlyCard, setDiscardFlyCard] = useState<Card | null>(null);
   const [windFlights, setWindFlights] = useState<WindFlight[]>([]);
   const [sceneFx, setSceneFx] = useState<'none' | 'eclipse' | 'reset'>('none');
@@ -757,6 +761,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const gardenSetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const handCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const arenaRef = useRef<HTMLDivElement | null>(null);
+  const counterTrayRef = useRef<HTMLDivElement | null>(null);
   const dragSessionRef = useRef<PointerDragSession | null>(null);
   const dragPreviewFrameRef = useRef<number | null>(null);
   const pendingDragPreviewRef = useRef<DragPreview | null>(null);
@@ -803,6 +808,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     pendingDragPreviewRef.current = null;
     setDragPreview(null);
     setDraggingCardId(null);
+    setCounterTrayHot(false);
     clearDropHover();
   }
 
@@ -894,10 +900,18 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       ? 'Your turn'
       : nameOf(G.players.find(p => p.id === G.turnOrder[G.currentPlayerIndex]));
   const myHand = me?.hand ?? [];
+  const isWindCounterWindow = isCounter
+    && amTarget
+    && inStage
+    && !!G.pendingAction
+    && (G.pendingAction.original.type === 'play_wind_single' || G.pendingAction.original.type === 'play_wind_double');
+  const counterWindRequiredCount = isWindCounterWindow
+    ? Math.max(1, Math.min(2, G.pendingAction?.windCount ?? (G.pendingAction?.original.type === 'play_wind_double' ? 2 : 1)))
+    : 0;
   const isMobileLayout = viewport.width <= 720;
   // Use the actual playfield size (subtracting v2 shell chrome)
-  const chatW  = chatOpen && !isMobileLayout ? 260 : 32;
-  const logW   = logOpen  && !isMobileLayout ? 240 : 32;
+  const chatW  = 0;
+  const logW   = 0;
   const headerH = 40; const actionH = isMobileLayout ? 120 : 108; const footerH = 34;
   const effectiveW = Math.max(320, viewport.width  - chatW - logW);
   const effectiveH = Math.max(280, viewport.height - headerH - actionH - footerH);
@@ -994,6 +1008,30 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     return hit;
   }
 
+  function canStageWindCounterCard(cardId: string) {
+    if (!isWindCounterWindow) return false;
+    const card = myHand.find(entry => entry.id === cardId);
+    return !!card && isPower(card, 'wind');
+  }
+
+  function toggleCounterWindCard(cardId: string) {
+    if (!canStageWindCounterCard(cardId)) return;
+    setError('');
+    setCounterPickedCards(prev => {
+      if (prev.includes(cardId)) return prev.filter(id => id !== cardId);
+      if (prev.length >= counterWindRequiredCount) {
+        return [...prev.slice(1), cardId];
+      }
+      return [...prev, cardId];
+    });
+  }
+
+  function hitTestCounterTray(clientX: number, clientY: number) {
+    if (!isWindCounterWindow || !counterTrayRef.current) return false;
+    const rect = counterTrayRef.current.getBoundingClientRect();
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
+
   function startCardPointerSession(cardId: string, event: React.PointerEvent<HTMLDivElement>) {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const sourceEl = handCardRefs.current[cardId];
@@ -1021,6 +1059,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   function handleHandCardClick(cardId: string) {
     if (suppressCardClickRef.current === cardId) {
       suppressCardClickRef.current = null;
+      return;
+    }
+    if (canStageWindCounterCard(cardId)) {
+      toggleCounterWindCard(cardId);
       return;
     }
     armCard(cardId);
@@ -1138,6 +1180,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         width: session.width,
         height: session.height,
       });
+      if (canStageWindCounterCard(session.cardId)) {
+        setCounterTrayHot(hitTestCounterTray(event.clientX, event.clientY));
+        clearDropHover();
+        return;
+      }
       updateDragHover(event.clientX, event.clientY);
     };
 
@@ -1146,7 +1193,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       if (!session || event.pointerId !== session.pointerId) return;
 
       const wasDragging = session.dragging;
-      const dropTarget = wasDragging ? hitTestGardenDrop(event.clientX, event.clientY) : null;
+      const droppedInCounterTray = wasDragging && canStageWindCounterCard(session.cardId) && hitTestCounterTray(event.clientX, event.clientY);
+      const dropTarget = wasDragging && !droppedInCounterTray && !canStageWindCounterCard(session.cardId)
+        ? hitTestGardenDrop(event.clientX, event.clientY)
+        : null;
 
       dragSessionRef.current = null;
       setPointerDragActive(false);
@@ -1155,6 +1205,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       if (!wasDragging) return;
 
       suppressNextCardClick(session.cardId);
+      if (droppedInCounterTray) {
+        toggleCounterWindCard(session.cardId);
+        return;
+      }
       if (dropTarget) {
         stagePlayFromCard(session.cardId, dropTarget.playerId, dropTarget.setId);
       }
@@ -1365,6 +1419,32 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     prevLogLenRef.current = G.log.length;
   }, [G.log.length, logOpen]);
 
+  useEffect(() => {
+    const latestEntry = G.log[G.log.length - 1];
+    if (!latestEntry) return;
+    if (!arenaLogToastPrimedRef.current) {
+      arenaLogToastPrimedRef.current = true;
+      return;
+    }
+    if (arenaLogToastTimerRef.current !== null) {
+      window.clearTimeout(arenaLogToastTimerRef.current);
+    }
+    setArenaLogToast({
+      key: `${G.log.length}-${latestEntry}`,
+      text: displayLogEntry(latestEntry),
+    });
+    arenaLogToastTimerRef.current = window.setTimeout(() => {
+      setArenaLogToast(null);
+      arenaLogToastTimerRef.current = null;
+    }, 1500);
+  }, [G.log.length]);
+
+  useEffect(() => () => {
+    if (arenaLogToastTimerRef.current !== null) {
+      window.clearTimeout(arenaLogToastTimerRef.current);
+    }
+  }, []);
+
   // ── Scroll chat to bottom on new messages ─────────────────
   useEffect(() => {
     if (chatMsgsRef.current) {
@@ -1557,6 +1637,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       const attacker = nameOf(G.players.find(p => p.id === pa.original.playerId));
       const myWind = me?.hand.filter(c => isPower(c, 'wind')) ?? [];
       const myDP   = me?.hand.filter(c => isPower(c, 'divine_protection')) ?? [];
+      const offeredTradeCard = pa.selectionKind === 'trade_present' ? pa.offeredCard : undefined;
 
       if (pa.selectionKind) {
         const requiredCount = pa.selectionKind === 'trade_present' ? 1 : Math.min(2, me?.hand.length ?? 0);
@@ -1570,6 +1651,28 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <p style={{ color: '#ccc', fontSize: 13, marginBottom: 12 }}>
               <b>{attacker}</b> played <b>{pa.original.type.replace(/_/g,' ')}</b> on you. {helper}
             </p>
+            {offeredTradeCard && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                marginBottom: 12,
+                padding: 10,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.12)',
+              }}>
+                <CardChip card={offeredTradeCard} small />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#e6c84a', fontSize: 11, fontWeight: 800, marginBottom: 4 }}>
+                    Offered card
+                  </div>
+                  <div style={{ color: '#f4f1ff', fontSize: 13 }}>
+                    You will receive <InlineCardLabel card={offeredTradeCard} /> if you choose a card to trade.
+                  </div>
+                </div>
+              </div>
+            )}
             {pa.original.targetSetId && (
               <p style={{ color: '#ffcc80', fontSize: 12, marginBottom: 10 }}>
                 Targeted set: <b>{attackedSetLabel}</b>
@@ -1615,19 +1718,42 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               Targeted set: <b>{attackedSetLabel}</b>
             </p>
           )}
+          {isWindCounterWindow && (
+            <div
+              ref={counterTrayRef}
+              className={`counter-wind-tray ${counterTrayHot ? 'is-hot' : ''}`}
+            >
+              <div className="counter-wind-tray__label">
+                Drag or tap {counterWindRequiredCount} Wind card{counterWindRequiredCount > 1 ? 's' : ''} into this tray
+              </div>
+              <div className="counter-wind-tray__cards">
+                {counterPickedCards.length === 0 ? (
+                  <span className="counter-wind-tray__placeholder">Wind cards you stage will appear here.</span>
+                ) : counterPickedCards.map(cardId => {
+                  const card = myHand.find(entry => entry.id === cardId);
+                  if (!card) return null;
+                  return (
+                    <div key={cardId} className="counter-wind-tray__card">
+                      <CardChip
+                        card={card}
+                        selected
+                        onClick={() => toggleCounterWindCard(cardId)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button style={btn('#555')} onClick={() => runMove(() => m.allowAction())}>✅ Allow</button>
-            {myWind.length > 0 &&
-              (pa.original.type === 'play_wind_single' || pa.original.type === 'play_wind_double') && (
-              <button style={btn('#1e6091')}
-                onClick={() => runMove(() => m.counterWind(myWind[0].id))}>
-                💨 Counter Wind (1 card)
-              </button>
-            )}
-            {myWind.length >= 2 && pa.original.type === 'play_wind_double' && pa.windCount === 2 && (
-              <button style={btn('#1e6091')}
-                onClick={() => runMove(() => m.counterWind(myWind[0].id, myWind[1].id))}>
-                💨💨 Counter Wind (2 cards)
+            {isWindCounterWindow && (
+              <button
+                style={btn('#1e6091')}
+                onClick={() => runMove(() => m.counterWind(...counterPickedCards))}
+                disabled={counterPickedCards.length !== counterWindRequiredCount}
+              >
+                {counterWindRequiredCount === 2 ? '💨💨 Counter Wind' : '💨 Counter Wind'}
               </button>
             )}
             {myDP.length > 0 && (
@@ -2223,23 +2349,45 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         </div>
       </header>
 
-      {/* ── CHAT DRAWER (left) ── */}
-      <div className={`v2-drawer v2-chat-drawer ${chatOpen ? 'is-open' : ''}`}
-        style={{ borderRight: `1px solid ${theme.border}`, background: theme.panelSoft }}>
-        <button
-          className="v2-rail"
-          style={{ color: theme.muted }}
-          onClick={() => { setChatOpen(o => !o); if (!chatOpen) setChatUnread(0); }}
-          title={chatOpen ? 'Collapse chat' : 'Open chat'}
-          aria-label="Toggle chat"
-        >
-          <span>💬</span>
-          {chatUnread > 0 && !chatOpen && (
-            <span className="v2-badge">{chatUnread > 9 ? '9+' : chatUnread}</span>
-          )}
-          {chatOpen && <span className="v2-rail-text">Chat</span>}
-        </button>
-        {chatOpen && (
+      {/* ── PLAYFIELD ── */}
+      <div className="v2-playfield">
+        <div className="arena-overlay-controls" aria-label="Arena controls">
+          <button
+            className={`arena-corner-btn arena-corner-btn-chat ${chatOpen ? 'is-open' : ''}`}
+            style={{ color: theme.text, background: theme.panel }}
+            onClick={() => {
+              setChatOpen(open => !open);
+              if (!chatOpen) setChatUnread(0);
+            }}
+            title={chatOpen ? 'Close chat' : 'Open chat'}
+            aria-label="Toggle chat"
+          >
+            <span className="arena-corner-btn__icon" aria-hidden="true">💬</span>
+            <span className="arena-corner-btn__label">Chat</span>
+            {chatUnread > 0 && !chatOpen && (
+              <span className="v2-badge arena-corner-btn__badge">{chatUnread > 9 ? '9+' : chatUnread}</span>
+            )}
+          </button>
+          <button
+            className={`arena-corner-btn arena-corner-btn-log ${logOpen ? 'is-open' : ''}`}
+            style={{ color: theme.text, background: theme.panel }}
+            onClick={() => {
+              setLogOpen(open => !open);
+              if (!logOpen) setLogUnread(0);
+            }}
+            title={logOpen ? 'Close log' : 'Open log'}
+            aria-label="Toggle log"
+          >
+            <span className="arena-corner-btn__icon" aria-hidden="true">📜</span>
+            <span className="arena-corner-btn__label">Log</span>
+            {logUnread > 0 && !logOpen && (
+              <span className="v2-badge arena-corner-btn__badge">{logUnread > 9 ? '9+' : logUnread}</span>
+            )}
+          </button>
+        </div>
+
+        <div className={`v2-drawer v2-chat-drawer ${chatOpen ? 'is-open' : ''}`}
+          style={{ background: theme.panelSoft }}>
           <div className="v2-drawer-content">
             <div className="v2-chat-msgs" ref={chatMsgsRef}>
               {chatMessages.length === 0
@@ -2278,11 +2426,22 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               >➤</button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* ── PLAYFIELD ── */}
-      <div className="v2-playfield">
+        <div className={`v2-drawer v2-log-drawer ${logOpen ? 'is-open' : ''}`}
+          style={{ background: theme.panelSoft }}>
+          <div className="v2-log-inner">
+            {G.log.length === 0
+              ? <div style={{ color: theme.muted, fontSize: 12, padding: 8 }}>No events yet.</div>
+              : [...G.log].reverse().map((entry, i) => (
+                <div key={i} className="v2-log-entry" style={{ color: theme.text }}>
+                  › {displayLogEntry(entry)}
+                </div>
+              ))
+            }
+          </div>
+        </div>
+
         {G.phase === 'game_over' && (
           <div style={{
             position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
@@ -2291,6 +2450,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             fontSize: 18, fontWeight: 700, whiteSpace: 'nowrap',
           }}>
             🎉 {nameOf(G.players.find(p => p.id === G.winner)) || G.winner} wins!
+          </div>
+        )}
+
+        {arenaLogToast && (
+          <div key={arenaLogToast.key} className="arena-log-toast" style={{ color: theme.text, background: theme.panel }}>
+            {arenaLogToast.text}
           </div>
         )}
 
@@ -2304,12 +2469,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             const player = layout.player;
             const isActive = G.turnOrder[G.currentPlayerIndex] === player.id;
             const isMe = player.id === playerID;
+            const isGodsFav = G.godsFavouritePlayerId === player.id;
             const canDropTarget = myTurn && G.phase === 'action';
             const activeGardenCardId = draggingCardId ?? armedCardId;
             const gardenPanelClass = [
               'player-garden',
-              isActive ? 'is-active' : '',
+              isActive ? 'is-current-turn' : '',
               isMe ? 'is-me' : '',
+              isGodsFav ? 'is-gods-fav' : '',
               gardenDensityClass(player.garden.sets.length),
               activeGardenPlayerId === player.id ? 'is-targeted' : '',
             ].filter(Boolean).join(' ');
@@ -2335,84 +2502,86 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 } as React.CSSProperties}
                 ref={(node) => { gardenRefs.current[player.id] = node; }}
               >
-                <GardenBlob
-                  seed={player.id}
-                  totalFlowers={layout.totalFlowers}
-                  totalSets={layout.totalSets}
-                  isActive={isActive}
-                  isMe={isMe}
-                  isTargeted={targeting}
-                  accent={isMe ? theme.accent : theme.accent2}
-                  accent2={isActive ? theme.accent2 : theme.accent}
-                  accent3={targeting ? theme.accent : theme.accent2}
-                />
-                {chatBubbles[player.id] && (
-                  <div key={chatBubbles[player.id].key} className="garden-chat-bubble">
-                    💬 {chatBubbles[player.id].text}
-                  </div>
-                )}
-                <div className="garden-mini-meta" style={{
-                  position: 'absolute', top: 8, left: 0, right: 0, zIndex: 2,
-                  padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
-                }}>
-                  <div style={{ fontWeight: 800, color: theme.text, fontSize: 11, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(player)}</div>
-                  <div style={{ color: theme.muted, fontSize: 9, lineHeight: 1.1, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {isActive ? '▶' : '·'} {player.hand.length}🃏{layout.totalFlowers > 0 ? ` · ${layout.totalFlowers}🌸` : ''}
-                    {G.godsFavouritePlayerId === player.id && ' 👑'}
-                  </div>
-                </div>
-                <div
-                  className="garden-zone"
-                  style={{ background: 'transparent', border: 'none' }}
-                >
-                  <div
-                    className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''} ${player.garden.sets.length === 0 ? 'is-empty' : ''}`}
-                  >
-                    {player.garden.sets.length === 0
-                      ? <div className="garden-empty-slot"
-                          onClick={canDropTarget && activeGardenCardId
-                            ? () => stagePlayFromCard(activeGardenCardId, player.id, '')
-                            : isMe && myTurn && G.phase === 'action'
-                            ? () => { setMoveType('plantOwn'); setTargetSet(''); setStep('pick-card'); }
-                            : undefined}>
-                          Tap or drop a flower here
-                        </div>
-                      : player.garden.sets.map(s => (
-                        <SetChip
-                          key={s.id}
-                          set={s}
-                          sizeClass={setSizeClass(s)}
-                          highlight={(targeting && activeGardenSetId === s.id) || (player.id === attackedGardenPlayerId && s.id === attackedGardenSetId)}
-                          dragActive={activeGardenCardId !== null && canDropTarget}
-                          setRef={(node) => { gardenSetRefs.current[gardenSetRefKey(player.id, s.id)] = node; }}
-                          onClick={canDropTarget && activeGardenCardId ? () => stagePlayFromCard(activeGardenCardId, player.id, s.id) : isMe && myTurn && G.phase === 'action' ? () => {
-                            setTargetPlayer(player.id);
-                            setTargetSet(s.id);
-                            setMoveType('plantOwn');
-                            setStep('pick-card');
-                          } : undefined}
-                        />
-                      ))
-                    }
-                  </div>
-                </div>
-                {step === 'confirm' && targetPlayer === player.id && (
-                  <div className="garden-quick-confirm" style={{
-                    marginTop: 6, padding: '6px 8px', borderRadius: 10,
-                    background: theme.panelSoft, border: `1px solid ${theme.accent}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    gap: 6, flexWrap: 'wrap',
+                <div className="garden-body">
+                  <GardenBlob
+                    seed={player.id}
+                    totalFlowers={layout.totalFlowers}
+                    totalSets={layout.totalSets}
+                    isActive={isActive}
+                    isMe={isMe}
+                    isTargeted={targeting}
+                    accent={isMe ? theme.accent : theme.accent2}
+                    accent2={isActive ? theme.accent2 : theme.accent}
+                    accent3={targeting ? theme.accent : theme.accent2}
+                  />
+                  {chatBubbles[player.id] && (
+                    <div key={chatBubbles[player.id].key} className="garden-chat-bubble">
+                      💬 {chatBubbles[player.id].text}
+                    </div>
+                  )}
+                  <div className="garden-mini-meta" style={{
+                    position: 'absolute', top: 8, left: 0, right: 0, zIndex: 2,
+                    padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
                   }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 10, color: theme.muted, marginBottom: 1 }}>Ready here</div>
-                      <div style={{ fontWeight: 800, color: theme.text, fontSize: 11 }}>{moveLabel(moveType)}</div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button style={btn(theme.accent, '#1a1a2e')} onClick={dispatch} disabled={isSubmitting}>✔</button>
-                      <button style={btn('#555')} onClick={resetAll}>✕</button>
+                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 11, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(player)}</div>
+                    <div style={{ color: theme.muted, fontSize: 9, lineHeight: 1.1, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {isActive ? '▶' : '·'} {player.hand.length}🃏{layout.totalFlowers > 0 ? ` · ${layout.totalFlowers}🌸` : ''}
+                      {isGodsFav && ' 👑'}
                     </div>
                   </div>
-                )}
+                  <div
+                    className="garden-zone"
+                    style={{ background: 'transparent', border: 'none' }}
+                  >
+                    <div
+                      className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''} ${player.garden.sets.length === 0 ? 'is-empty' : ''}`}
+                    >
+                      {player.garden.sets.length === 0
+                        ? <div className="garden-empty-slot"
+                            onClick={canDropTarget && activeGardenCardId
+                              ? () => stagePlayFromCard(activeGardenCardId, player.id, '')
+                              : isMe && myTurn && G.phase === 'action'
+                              ? () => { setMoveType('plantOwn'); setTargetSet(''); setStep('pick-card'); }
+                              : undefined}>
+                            Tap or drop a flower here
+                          </div>
+                        : player.garden.sets.map(s => (
+                          <SetChip
+                            key={s.id}
+                            set={s}
+                            sizeClass={setSizeClass(s)}
+                            highlight={(targeting && activeGardenSetId === s.id) || (player.id === attackedGardenPlayerId && s.id === attackedGardenSetId)}
+                            dragActive={activeGardenCardId !== null && canDropTarget}
+                            setRef={(node) => { gardenSetRefs.current[gardenSetRefKey(player.id, s.id)] = node; }}
+                            onClick={canDropTarget && activeGardenCardId ? () => stagePlayFromCard(activeGardenCardId, player.id, s.id) : isMe && myTurn && G.phase === 'action' ? () => {
+                              setTargetPlayer(player.id);
+                              setTargetSet(s.id);
+                              setMoveType('plantOwn');
+                              setStep('pick-card');
+                            } : undefined}
+                          />
+                        ))
+                      }
+                    </div>
+                  </div>
+                  {step === 'confirm' && targetPlayer === player.id && (
+                    <div className="garden-quick-confirm" style={{
+                      marginTop: 6, padding: '6px 8px', borderRadius: 10,
+                      background: theme.panelSoft, border: `1px solid ${theme.accent}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 6, flexWrap: 'wrap',
+                    }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 10, color: theme.muted, marginBottom: 1 }}>Ready here</div>
+                        <div style={{ fontWeight: 800, color: theme.text, fontSize: 11 }}>{moveLabel(moveType)}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button style={btn(theme.accent, '#1a1a2e')} onClick={dispatch} disabled={isSubmitting}>✔</button>
+                        <button style={btn('#555')} onClick={resetAll}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -2442,36 +2611,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             </span>
           )}
         </div>
-      </div>
-
-      {/* ── LOG DRAWER (right) ── */}
-      <div className={`v2-drawer v2-log-drawer ${logOpen ? 'is-open' : ''}`}
-        style={{ borderLeft: `1px solid ${theme.border}`, background: theme.panelSoft }}>
-        <button
-          className="v2-rail"
-          style={{ color: theme.muted }}
-          onClick={() => { setLogOpen(o => !o); if (!logOpen) setLogUnread(0); }}
-          title={logOpen ? 'Collapse log' : 'Open log'}
-          aria-label="Toggle log"
-        >
-          <span>📜</span>
-          {logUnread > 0 && !logOpen && (
-            <span className="v2-badge">{logUnread > 9 ? '9+' : logUnread}</span>
-          )}
-          {logOpen && <span className="v2-rail-text">Log</span>}
-        </button>
-        {logOpen && (
-          <div className="v2-log-inner">
-            {G.log.length === 0
-              ? <div style={{ color: theme.muted, fontSize: 12, padding: 8 }}>No events yet.</div>
-              : [...G.log].reverse().map((entry, i) => (
-                <div key={i} className="v2-log-entry" style={{ color: theme.text }}>
-                  › {displayLogEntry(entry)}
-                </div>
-              ))
-            }
-          </div>
-        )}
       </div>
 
       {/* ── ACTION ROW ── */}
@@ -2530,7 +2669,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             {myHand.length === 0 ? (
               <span style={{ color: theme.muted, fontSize: 12 }}>Empty</span>
             ) : myHand.map((c, i) => {
-              const canDrag = myTurn && G.phase === 'action';
+              const canCounterDrag = canStageWindCounterCard(c.id);
+              const canDrag = (myTurn && G.phase === 'action') || canCounterDrag;
               const mid = (myHand.length - 1) / 2;
               return (
                 <div
@@ -2541,10 +2681,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 >
                   <CardChip
                     card={c}
-                    selected={armedCardId === c.id || pickedCards.includes(c.id)}
+                    selected={armedCardId === c.id || pickedCards.includes(c.id) || counterPickedCards.includes(c.id)}
                     draggable={canDrag}
                     dragging={draggingCardId === c.id}
-                    onClick={myTurn && G.phase === 'action' ? () => handleHandCardClick(c.id) : undefined}
+                    onClick={canDrag ? () => handleHandCardClick(c.id) : undefined}
                     onPointerDown={canDrag ? (event) => startCardPointerSession(c.id, event) : undefined}
                   />
                 </div>
