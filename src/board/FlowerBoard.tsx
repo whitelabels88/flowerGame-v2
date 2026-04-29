@@ -161,11 +161,35 @@ const MOVE_SFX_PRESETS: MoveSfxPreset[] = [
   { type: 'triangle', notes: [784, 932, 1175], step: 0.055, gain: 0.055 },
 ];
 
+let moveSfxAudioContext: AudioContext | null = null;
+
+function getMoveSfxAudioContext(): AudioContext | null {
+  const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  if (!moveSfxAudioContext || moveSfxAudioContext.state === 'closed') {
+    moveSfxAudioContext = new AudioContextCtor();
+  }
+  return moveSfxAudioContext;
+}
+
+function unlockMoveSfx() {
+  try {
+    const audio = getMoveSfxAudioContext();
+    if (!audio || audio.state !== 'suspended') return;
+    void audio.resume().catch(() => undefined);
+  } catch {
+    // best-effort only
+  }
+}
+
 function playMoveSfx() {
   try {
-    const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) return;
-    const audio = new AudioContextCtor();
+    const audio = getMoveSfxAudioContext();
+    if (!audio) return;
+    if (audio.state === 'suspended') {
+      void audio.resume().then(() => playMoveSfx()).catch(() => undefined);
+      return;
+    }
     const oscillator = audio.createOscillator();
     const gain = audio.createGain();
     const preset = MOVE_SFX_PRESETS[Math.floor(Math.random() * MOVE_SFX_PRESETS.length)];
@@ -183,9 +207,6 @@ function playMoveSfx() {
     gain.connect(audio.destination);
     oscillator.start();
     oscillator.stop(audio.currentTime + (preset.step * (preset.notes.length + 1.3)));
-    void oscillator.addEventListener('ended', () => {
-      void audio.close().catch(() => undefined);
-    }, { once: true });
   } catch {
     // best-effort only
   }
@@ -827,7 +848,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const submitUnlockRef = useRef<number | null>(null);
   const gardenVisualEffectTimerRef = useRef<number | null>(null);
   const previousLogLengthRef = useRef<number>(G.log.length);
-  const lastPlantSoundedLogIndexRef = useRef<number>(-1);
+  const pendingLocalPlantSoundLogSkipsRef = useRef<number>(0);
   const awaitingMoveResolutionRef = useRef<{
     phase: GameState['phase'];
     logLength: number;
@@ -839,6 +860,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   // Live ref to moves — allows effects to always call the latest proxy
   const movesRef = useRef(m);
   movesRef.current = m;
+
+  useEffect(() => {
+    const unlockAudio = () => unlockMoveSfx();
+    window.addEventListener('pointerdown', unlockAudio, { passive: true });
+    window.addEventListener('keydown', unlockAudio);
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
 
   function gardenSetRefKey(playerId: string, setId: string) {
     return `${playerId}::${setId}`;
@@ -1274,11 +1305,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (G.log.length > previousLength) {
       for (let i = previousLength; i < G.log.length; i += 1) {
         const entry = G.log[i];
-        if (typeof entry === 'string' && /\bplant(ed|ing)?\b/i.test(entry) && i > lastPlantSoundedLogIndexRef.current) {
-          playMoveSfx();
-          lastPlantSoundedLogIndexRef.current = i;
-          break;
+        if (typeof entry !== 'string' || !/\bplant(ed|ing)?\b/i.test(entry)) continue;
+        if (pendingLocalPlantSoundLogSkipsRef.current > 0) {
+          pendingLocalPlantSoundLogSkipsRef.current -= 1;
+          continue;
         }
+          playMoveSfx();
+        break;
       }
     }
     previousLogLengthRef.current = G.log.length;
@@ -1753,12 +1786,23 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     const pickedHandCards = pickedCards
       .map(id => me?.hand.find(card => card.id === id))
       .filter((card): card is Card => !!card);
+    const triggerLocalPlantSfx = effectiveMoveType === 'plantOwn' || effectiveMoveType === 'plantOpponent' || effectiveMoveType === 'playBee';
 
       switch (effectiveMoveType) {
       case 'plantOwn':
+        if (triggerLocalPlantSfx) {
+          unlockMoveSfx();
+          playMoveSfx();
+          pendingLocalPlantSoundLogSkipsRef.current += 1;
+        }
         runMove(() => m.plantOwn(c1, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'plantOpponent':
+        if (triggerLocalPlantSfx) {
+          unlockMoveSfx();
+          playMoveSfx();
+          pendingLocalPlantSoundLogSkipsRef.current += 1;
+        }
         runMove(() => m.plantOpponent(c1, targetPlayer, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'playWindSingle':
@@ -1777,6 +1821,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         runMove(() => m.playBug(c1, targetPlayer, targetSet));
         break;
       case 'playBee':
+        if (triggerLocalPlantSfx) {
+          unlockMoveSfx();
+          playMoveSfx();
+          pendingLocalPlantSoundLogSkipsRef.current += 1;
+        }
         runMove(() => m.playBee(c1, discardChoice, targetPlayer || playerID!, resolvedTargetSet, chosenColor || undefined));
         break;
       case 'doubleHappinessTake': {
