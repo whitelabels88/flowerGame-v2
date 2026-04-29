@@ -141,25 +141,43 @@ function InlineCardLabel({ card }: { card: Card }) {
   );
 }
 
-function playTurnChime() {
+type MoveSfxPreset = {
+  type: OscillatorType;
+  notes: number[];
+  step: number;
+  gain: number;
+};
+
+const MOVE_SFX_PRESETS: MoveSfxPreset[] = [
+  { type: 'triangle', notes: [660, 784, 988], step: 0.075, gain: 0.065 },
+  { type: 'sine', notes: [440, 554, 659], step: 0.09, gain: 0.072 },
+  { type: 'square', notes: [330, 392, 523], step: 0.065, gain: 0.05 },
+  { type: 'sawtooth', notes: [523, 659, 523], step: 0.07, gain: 0.045 },
+  { type: 'triangle', notes: [784, 932, 1175], step: 0.055, gain: 0.055 },
+];
+
+function playMoveSfx() {
   try {
     const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextCtor) return;
     const audio = new AudioContextCtor();
     const oscillator = audio.createOscillator();
     const gain = audio.createGain();
+    const preset = MOVE_SFX_PRESETS[Math.floor(Math.random() * MOVE_SFX_PRESETS.length)];
 
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, audio.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(660, audio.currentTime + 0.18);
+    oscillator.type = preset.type;
+    oscillator.frequency.setValueAtTime(preset.notes[0], audio.currentTime);
+    preset.notes.slice(1).forEach((note, index) => {
+      oscillator.frequency.exponentialRampToValueAtTime(note, audio.currentTime + ((index + 1) * preset.step));
+    });
     gain.gain.setValueAtTime(0.0001, audio.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.08, audio.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.22);
+    gain.gain.exponentialRampToValueAtTime(preset.gain, audio.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + (preset.step * (preset.notes.length + 1)));
 
     oscillator.connect(gain);
     gain.connect(audio.destination);
     oscillator.start();
-    oscillator.stop(audio.currentTime + 0.24);
+    oscillator.stop(audio.currentTime + (preset.step * (preset.notes.length + 1.3)));
     void oscillator.addEventListener('ended', () => {
       void audio.close().catch(() => undefined);
     }, { once: true });
@@ -621,7 +639,7 @@ const QUICK_CHAT_OPTIONS = [
   { emoji: '🌸', text: '🌸' },
   { emoji: '👍', text: '👍' },
   { emoji: '🎉', text: '🎉' },
-  { emoji: '💨', text: '💨' },
+  { emoji: '🖕', text: '🖕' },
   { emoji: '👀', text: '👀' },
   { emoji: '😭', text: '😭' },
 ];
@@ -798,11 +816,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const dragPreviewFrameRef = useRef<number | null>(null);
   const pendingDragPreviewRef = useRef<DragPreview | null>(null);
   const suppressCardClickRef = useRef<string | null>(null);
-  const previousCurrentPlayerRef = useRef<string | null>(null);
   const previousDiscardCountRef = useRef<number>(G.discardPile.length);
   const previousGardenIdsRef = useRef<Record<string, string[]>>(snapshotGardenIds(G.players));
   const submitUnlockRef = useRef<number | null>(null);
   const gardenVisualEffectTimerRef = useRef<number | null>(null);
+  const previousLogLengthRef = useRef<number>(G.log.length);
+  const lastPlantSoundedLogIndexRef = useRef<number>(-1);
   const awaitingMoveResolutionRef = useRef<{
     phase: GameState['phase'];
     logLength: number;
@@ -1225,12 +1244,19 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   }, [effectiveMoveType, G.players, targetPlayer, targetSet]);
 
   useEffect(() => {
-    const previous = previousCurrentPlayerRef.current;
-    if (previous !== null && previous !== ctx.currentPlayer) {
-      playTurnChime();
+    const previousLength = previousLogLengthRef.current;
+    if (G.log.length > previousLength) {
+      for (let i = previousLength; i < G.log.length; i += 1) {
+        const entry = G.log[i];
+        if (typeof entry === 'string' && /\bplant(ed|ing)?\b/i.test(entry) && i > lastPlantSoundedLogIndexRef.current) {
+          playMoveSfx();
+          lastPlantSoundedLogIndexRef.current = i;
+          break;
+        }
+      }
     }
-    previousCurrentPlayerRef.current = ctx.currentPlayer;
-  }, [ctx.currentPlayer]);
+    previousLogLengthRef.current = G.log.length;
+  }, [G.log.length]);
 
   useEffect(() => {
     setNowMs(Date.now());
