@@ -1272,53 +1272,6 @@ input, select, textarea { font-family: inherit; }
   margin: 0;
 }
 
-.counter-wind-tray {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 16px;
-  border: 1px dashed rgba(117, 211, 255, 0.48);
-  background: linear-gradient(180deg, rgba(16, 41, 74, 0.68), rgba(18, 27, 52, 0.88));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
-  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
-}
-
-.counter-wind-tray.is-hot {
-  transform: translateY(-1px) scale(1.01);
-  border-color: rgba(151, 239, 255, 0.92);
-  background: linear-gradient(180deg, rgba(24, 79, 119, 0.84), rgba(22, 43, 78, 0.94));
-  box-shadow: 0 0 0 2px rgba(120, 221, 255, 0.22), inset 0 0 0 1px rgba(255,255,255,0.08);
-}
-
-.counter-wind-tray__label {
-  color: #d8f1ff;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  text-align: center;
-}
-
-.counter-wind-tray__cards {
-  min-height: 88px;
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.counter-wind-tray__placeholder {
-  color: rgba(220, 236, 255, 0.72);
-  font-size: 11px;
-  text-align: center;
-  max-width: 180px;
-  line-height: 1.35;
-}
-
-.counter-wind-tray__card .card-chip {
-  margin: 0;
-}
-
 .tether-overlay {
   position: fixed;
   inset: 0;
@@ -1391,7 +1344,7 @@ input, select, textarea { font-family: inherit; }
   height: min(80vw, 80vh);
   object-fit: contain;
   filter: drop-shadow(0 18px 42px rgba(0, 0, 0, 0.28));
-  animation: card-play-fx-pop 750ms cubic-bezier(.22,.8,.2,1) forwards;
+  animation: card-play-fx-pop 1000ms cubic-bezier(.22,.8,.2,1) forwards;
 }
 
 .card-play-fx--wind-blow .card-play-fx__image {
@@ -2244,14 +2197,14 @@ input, select, textarea { font-family: inherit; }
   line-height: 1.35;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  animation: arena-log-toast 1.5s ease forwards;
+  animation: arena-log-toast 5s ease forwards;
   pointer-events: none;
 }
 
 @keyframes arena-log-toast {
   0% { opacity: 0; transform: translateY(-6px) scale(0.96); }
   12% { opacity: 1; transform: translateY(0) scale(1); }
-  78% { opacity: 1; transform: translateY(0) scale(1); }
+  90% { opacity: 1; transform: translateY(0) scale(1); }
   100% { opacity: 0; transform: translateY(-4px) scale(0.98); }
 }
 

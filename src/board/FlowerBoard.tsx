@@ -705,6 +705,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [hoverTargetSet, setHoverTargetSet] = useState('');
   const [chosenColor, setChosenColor] = useState('');
   const [discardChoice, setDiscardChoice] = useState('');
+  const [windAttackDoubleMode, setWindAttackDoubleMode] = useState(false);
   const [counterPickedCards, setCounterPickedCards] = useState<string[]>([]);
   const [error, setError] = useState('');
 
@@ -718,7 +719,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const [pointerDragActive, setPointerDragActive] = useState(false);
   const [armedCardId, setArmedCardId] = useState<string | null>(null);
-  const [counterTrayHot, setCounterTrayHot] = useState(false);
   const [arenaLogToast, setArenaLogToast] = useState<{ key: string; text: string } | null>(null);
 
   // ── V2 drawer / modal state ────────────────────────────────
@@ -767,7 +767,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const gardenSetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const handCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const arenaRef = useRef<HTMLDivElement | null>(null);
-  const counterTrayRef = useRef<HTMLDivElement | null>(null);
   const dragSessionRef = useRef<PointerDragSession | null>(null);
   const dragPreviewFrameRef = useRef<number | null>(null);
   const pendingDragPreviewRef = useRef<DragPreview | null>(null);
@@ -814,7 +813,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     pendingDragPreviewRef.current = null;
     setDragPreview(null);
     setDraggingCardId(null);
-    setCounterTrayHot(false);
     clearDropHover();
   }
 
@@ -827,7 +825,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   function resetAll() {
     setStep('menu'); setMoveType(''); setPickedCards([]);
-    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setError('');
+    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setWindAttackDoubleMode(false); setError('');
     dragSessionRef.current = null;
     setPointerDragActive(false);
     setArmedCardId(null); clearDragState();
@@ -906,14 +904,22 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       ? 'Your turn'
       : nameOf(G.players.find(p => p.id === G.turnOrder[G.currentPlayerIndex]));
   const myHand = me?.hand ?? [];
+  const selectedPrimaryWindCard = moveType === 'playWindSingle'
+    ? myHand.find(card => card.id === pickedCards[0] && isPower(card, 'wind')) ?? null
+    : null;
+  const extraWindCards = selectedPrimaryWindCard
+    ? myHand.filter(card => isPower(card, 'wind') && card.id !== selectedPrimaryWindCard.id)
+    : [];
+  const autoDoubleWindCard = extraWindCards[0] ?? null;
+  const canUpgradeSingleWind = !!selectedPrimaryWindCard && !!autoDoubleWindCard;
+  const effectiveMoveType = moveType === 'playWindSingle' && windAttackDoubleMode && canUpgradeSingleWind
+    ? 'playWindDouble'
+    : moveType;
   const isWindCounterWindow = isCounter
     && amTarget
     && inStage
     && !!G.pendingAction
     && (G.pendingAction.original.type === 'play_wind_single' || G.pendingAction.original.type === 'play_wind_double');
-  const counterWindRequiredCount = isWindCounterWindow
-    ? Math.max(1, Math.min(2, G.pendingAction?.windCount ?? (G.pendingAction?.original.type === 'play_wind_double' ? 2 : 1)))
-    : 0;
   const isMobileLayout = viewport.width <= 720;
   // Use the actual playfield size (subtracting v2 shell chrome)
   const chatW  = 0;
@@ -1014,28 +1020,15 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     return hit;
   }
 
-  function canStageWindCounterCard(cardId: string) {
-    if (!isWindCounterWindow) return false;
-    const card = myHand.find(entry => entry.id === cardId);
-    return !!card && isPower(card, 'wind');
-  }
-
-  function toggleCounterWindCard(cardId: string) {
-    if (!canStageWindCounterCard(cardId)) return;
+  function defendWithWind(count: number) {
+    if (!isWindCounterWindow) return;
+    const availableWind = myHand.filter(entry => isPower(entry, 'wind'));
+    if (availableWind.length < count) {
+      setError(`You need ${count} Wind card${count > 1 ? 's' : ''} to defend.`);
+      return;
+    }
     setError('');
-    setCounterPickedCards(prev => {
-      if (prev.includes(cardId)) return prev.filter(id => id !== cardId);
-      if (prev.length >= counterWindRequiredCount) {
-        return [...prev.slice(1), cardId];
-      }
-      return [...prev, cardId];
-    });
-  }
-
-  function hitTestCounterTray(clientX: number, clientY: number) {
-    if (!isWindCounterWindow || !counterTrayRef.current) return false;
-    const rect = counterTrayRef.current.getBoundingClientRect();
-    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    runMove(() => m.counterWind(...availableWind.slice(0, count).map(card => card.id)));
   }
 
   function startCardPointerSession(cardId: string, event: React.PointerEvent<HTMLDivElement>) {
@@ -1067,10 +1060,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       suppressCardClickRef.current = null;
       return;
     }
-    if (canStageWindCounterCard(cardId)) {
-      toggleCounterWindCard(cardId);
-      return;
-    }
     armCard(cardId);
   }
 
@@ -1088,6 +1077,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (isPower(card, 'eclipse')) return 'playEclipse';
     if (isPower(card, 'great_reset')) return 'playGreatReset';
     return null;
+  }
+
+  function isValidTargetSetForMove(type: string, set: GardenSet) {
+    if (set.isDivine) return false;
+    if (type === 'naturalDisaster') return true;
+    if (type === 'playBug') return !(set.isSolid && G.season !== 'autumn');
+    if (type === 'playWindSingle') return !set.isSolid && !set.containsTripleRainbow && set.flowers.length > 0;
+    if (type === 'playWindDouble') return !set.isSolid && set.flowers.length > 0;
+    if (type === 'playBee') return true;
+    return true;
   }
 
   function stagePlayFromCard(cardId: string, targetPlayerId: string, targetSetId: string | '') {
@@ -1149,6 +1148,26 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   }, [G.pendingAction?.selectionKind, G.pendingAction?.original.type, G.phase]);
 
   useEffect(() => {
+    if (moveType !== 'playWindSingle' && windAttackDoubleMode) {
+      setWindAttackDoubleMode(false);
+    }
+  }, [moveType, windAttackDoubleMode]);
+
+  useEffect(() => {
+    if (moveType === 'playWindSingle' && windAttackDoubleMode && !canUpgradeSingleWind) {
+      setWindAttackDoubleMode(false);
+    }
+  }, [moveType, windAttackDoubleMode, canUpgradeSingleWind]);
+
+  useEffect(() => {
+    if (!targetPlayer || !targetSet || !['playWindSingle', 'playWindDouble', 'playBug', 'naturalDisaster', 'playBee'].includes(effectiveMoveType)) return;
+    const target = G.players.find(player => player.id === targetPlayer);
+    const selectedSet = target?.garden.sets.find(set => set.id === targetSet);
+    if (selectedSet && isValidTargetSetForMove(effectiveMoveType, selectedSet)) return;
+    setTargetSet('');
+  }, [effectiveMoveType, G.players, targetPlayer, targetSet]);
+
+  useEffect(() => {
     const previous = previousCurrentPlayerRef.current;
     if (previous !== null && previous !== ctx.currentPlayer) {
       playTurnChime();
@@ -1186,11 +1205,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         width: session.width,
         height: session.height,
       });
-      if (canStageWindCounterCard(session.cardId)) {
-        setCounterTrayHot(hitTestCounterTray(event.clientX, event.clientY));
-        clearDropHover();
-        return;
-      }
       updateDragHover(event.clientX, event.clientY);
     };
 
@@ -1199,10 +1213,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       if (!session || event.pointerId !== session.pointerId) return;
 
       const wasDragging = session.dragging;
-      const droppedInCounterTray = wasDragging && canStageWindCounterCard(session.cardId) && hitTestCounterTray(event.clientX, event.clientY);
-      const dropTarget = wasDragging && !droppedInCounterTray && !canStageWindCounterCard(session.cardId)
-        ? hitTestGardenDrop(event.clientX, event.clientY)
-        : null;
+      const dropTarget = wasDragging ? hitTestGardenDrop(event.clientX, event.clientY) : null;
 
       dragSessionRef.current = null;
       setPointerDragActive(false);
@@ -1211,10 +1222,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       if (!wasDragging) return;
 
       suppressNextCardClick(session.cardId);
-      if (droppedInCounterTray) {
-        toggleCounterWindCard(session.cardId);
-        return;
-      }
       if (dropTarget) {
         stagePlayFromCard(session.cardId, dropTarget.playerId, dropTarget.setId);
       }
@@ -1299,7 +1306,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       cardPlayFxTimerRef.current = window.setTimeout(() => {
         setCardPlayFx('none');
         cardPlayFxTimerRef.current = null;
-      }, 750);
+      }, 1000);
     };
 
     const isWindLog = /wind/i.test(latestLog) && /(blew|blow|counter wind)/i.test(latestLog);
@@ -1424,7 +1431,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           if (bubbleTimersRef.current[pid]) window.clearTimeout(bubbleTimersRef.current[pid]);
           bubbleTimersRef.current[pid] = window.setTimeout(() => {
             setChatBubbles(prev => { const next = { ...prev }; delete next[pid]; return next; });
-          }, 4000);
+          }, 5000);
         }
       } catch { /* best-effort */ }
     };
@@ -1463,7 +1470,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     arenaLogToastTimerRef.current = window.setTimeout(() => {
       setArenaLogToast(null);
       arenaLogToastTimerRef.current = null;
-    }, 1500);
+    }, 5000);
   }, [G.log.length]);
 
   useEffect(() => () => {
@@ -1560,7 +1567,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     ? resolvePlantTargetSetId(pickedCards[0] ?? '', targetPlayer || playerID || '', targetSet)
     : targetSet;
   const selectedTargetSet = selectedTargetPlayer?.garden.sets.find(set => set.id === effectiveTargetSetId) ?? null;
-  const moveInfo = moveDetails(moveType);
+  const moveInfo = moveDetails(effectiveMoveType);
 
   function dispatch() {
     setError('');
@@ -1581,7 +1588,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       .map(id => me?.hand.find(card => card.id === id))
       .filter((card): card is Card => !!card);
 
-      switch (moveType) {
+      switch (effectiveMoveType) {
       case 'plantOwn':
         runMove(() => m.plantOwn(c1, resolvedTargetSet, chosenColor || undefined));
         break;
@@ -1592,6 +1599,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         runMove(() => m.playWindSingle(c1, targetPlayer, targetSet));
         break;
       case 'playWindDouble':
+        if (moveType === 'playWindSingle') {
+          if (!autoDoubleWindCard) { setError('You need 2 Wind cards for the double Wind move.'); return; }
+          runMove(() => m.playWindDouble(c1, autoDoubleWindCard.id, targetPlayer, targetSet));
+          break;
+        }
         if (!c2) { setError('Select 2 Wind cards'); return; }
         runMove(() => m.playWindDouble(c1, c2, targetPlayer, targetSet));
         break;
@@ -1745,43 +1757,25 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               Targeted set: <b>{attackedSetLabel}</b>
             </p>
           )}
-          {isWindCounterWindow && (
-            <div
-              ref={counterTrayRef}
-              className={`counter-wind-tray ${counterTrayHot ? 'is-hot' : ''}`}
-            >
-              <div className="counter-wind-tray__label">
-                Drag or tap {counterWindRequiredCount} Wind card{counterWindRequiredCount > 1 ? 's' : ''} into this tray
-              </div>
-              <div className="counter-wind-tray__cards">
-                {counterPickedCards.length === 0 ? (
-                  <span className="counter-wind-tray__placeholder">Wind cards you stage will appear here.</span>
-                ) : counterPickedCards.map(cardId => {
-                  const card = myHand.find(entry => entry.id === cardId);
-                  if (!card) return null;
-                  return (
-                    <div key={cardId} className="counter-wind-tray__card">
-                      <CardChip
-                        card={card}
-                        selected
-                        onClick={() => toggleCounterWindCard(cardId)}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button style={btn('#555')} onClick={() => runMove(() => m.allowAction())}>✅ Allow</button>
-            {isWindCounterWindow && (
-              <button
-                style={btn('#1e6091')}
-                onClick={() => runMove(() => m.counterWind(...counterPickedCards))}
-                disabled={counterPickedCards.length !== counterWindRequiredCount}
-              >
-                {counterWindRequiredCount === 2 ? '💨💨 Counter Wind' : '💨 Counter Wind'}
-              </button>
+            {isWindCounterWindow && myWind.length >= 1 && (
+              <>
+                <button
+                  style={btn('#1e6091')}
+                  onClick={() => defendWithWind(1)}
+                >
+                  💨 Use 1 Wind Card
+                </button>
+                {myWind.length >= 2 && (
+                  <button
+                    style={btn('#1e6091')}
+                    onClick={() => defendWithWind(2)}
+                  >
+                    💨💨 Use 2 Wind Cards
+                  </button>
+                )}
+              </>
             )}
             {myDP.length > 0 && (
               <button style={btn('#7b2d8b')}
@@ -2122,15 +2116,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (step === 'pick-target') {
       const tgt = G.players.find(p => p.id === targetPlayer);
       const showSetPicker = ['playWindSingle','playWindDouble','playBug','naturalDisaster','playBee'].includes(moveType);
-      const validSets = !tgt ? [] : tgt.garden.sets.filter(s => {
-        if (s.isDivine) return false;
-        if (moveType === 'naturalDisaster') return true;
-        if (moveType === 'playBug') return !(s.isSolid && G.season !== 'autumn');
-        if (moveType === 'playWindSingle') return !s.isSolid && !s.containsTripleRainbow && s.flowers.length > 0;
-        if (moveType === 'playWindDouble') return !s.isSolid && s.flowers.length > 0;
-        if (moveType === 'playBee') return true;
-        return true;
-      });
+      const validSets = !tgt ? [] : tgt.garden.sets.filter(s => isValidTargetSetForMove(effectiveMoveType, s));
 
       return (
         <div style={{ background: '#16213e', borderRadius: 12, padding: 16, marginTop: 12 }}>
@@ -2140,7 +2126,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <button style={btn('#333')} onClick={resetAll}>✕ Cancel</button>
           </div>
           <div style={{ background: '#0f3460', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-            <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(moveType)}</div>
+            <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(effectiveMoveType)}</div>
             <p style={{ color: '#cbd5ff', fontSize: 13, margin: '0 0 8px 0' }}>{moveInfo.summary}</p>
             <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
               Selected card{selectedCards.length === 1 ? '' : 's'}:{' '}
@@ -2155,6 +2141,34 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               {moveType === 'playBee' ? 'Next: choose whose garden Bee will plant into, then choose a set or start a new one.' : 'Next: choose a player, then finish any required target-set selection.'}
             </div>
           </div>
+          {moveType === 'playWindSingle' && selectedPrimaryWindCard && (
+            <div style={{ background: '#1a1a2e', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <div style={{ color: '#fff', fontWeight: 700, marginBottom: 8 }}>Wind strength</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                <button
+                  style={btn(!windAttackDoubleMode ? '#4ecca3' : '#333', !windAttackDoubleMode ? '#1a1a2e' : '#fff')}
+                  onClick={() => setWindAttackDoubleMode(false)}
+                >
+                  💨 Use 1 Wind card
+                </button>
+                {canUpgradeSingleWind && (
+                  <button
+                    style={btn(windAttackDoubleMode ? '#4ecca3' : '#333', windAttackDoubleMode ? '#1a1a2e' : '#fff')}
+                    onClick={() => setWindAttackDoubleMode(true)}
+                  >
+                    💨💨 Use 2 Wind cards
+                  </button>
+                )}
+              </div>
+              <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
+                {canUpgradeSingleWind
+                  ? windAttackDoubleMode
+                    ? 'Double Wind is armed. Confirming this attack will spend your selected Wind plus one more Wind card automatically.'
+                    : 'You have a second Wind card available, so you can upgrade this single Wind attack into the stronger double-Wind move.'
+                  : 'You only have one Wind card ready, so this attack will proceed as a normal single Wind move.'}
+              </div>
+            </div>
+          )}
           <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>
             {moveType === 'playBee' ? 'Choose whose garden Bee will plant into:' : 'Who do you want to target?'}
           </p>
@@ -2211,25 +2225,28 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       const pickedCardObjects = pickedCards
         .map(id => me?.hand.find(c => c.id === id))
         .filter((card): card is Card => !!card);
+      const previewCardObjects = effectiveMoveType === 'playWindDouble' && moveType === 'playWindSingle' && autoDoubleWindCard
+        ? [...pickedCardObjects, autoDoubleWindCard]
+        : pickedCardObjects;
       const tname = nameOf(G.players.find(p => p.id === targetPlayer));
       const beeDiscardCard = beeDiscardFlowers.find(c => c.id === discardChoice);
       return (
         <div style={{ background: '#16213e', borderRadius: 12, padding: 16, marginTop: 12 }}>
           <h4 style={{ color: '#4ecca3', marginBottom: 10 }}>Confirm Move</h4>
           <div style={{ background: '#0f3460', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-            <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(moveType)}</div>
+            <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(effectiveMoveType)}</div>
             <p style={{ color: '#cbd5ff', fontSize: 13, margin: '0 0 8px 0' }}>{moveInfo.summary}</p>
             <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
               Review your choices below, then confirm to send the move.
             </div>
           </div>
           <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>
-            Action: <b>{moveLabel(moveType)}</b>
+            Action: <b>{moveLabel(effectiveMoveType)}</b>
           </p>
           <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>
             Card(s):{' '}
             <b>
-              {pickedCardObjects.map((card, index) => (
+              {previewCardObjects.map((card, index) => (
                 <span key={card.id}>
                   {index > 0 ? ', ' : null}
                   <InlineCardLabel card={card} />
@@ -2237,6 +2254,28 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               ))}
             </b>
           </p>
+          {moveType === 'playWindSingle' && canUpgradeSingleWind && (
+            <div style={{ background: '#1a1a2e', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <p style={{ fontSize: 13, color: '#9fb0ff', margin: '0 0 8px 0' }}>
+                Wind mode: <b>{windAttackDoubleMode ? 'Double Wind enabled' : 'Single Wind'}</b>
+                {windAttackDoubleMode && ' · the second Wind card will be used automatically on confirm.'}
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  style={btn(!windAttackDoubleMode ? '#4ecca3' : '#333', !windAttackDoubleMode ? '#1a1a2e' : '#fff')}
+                  onClick={() => setWindAttackDoubleMode(false)}
+                >
+                  💨 Use 1 Wind card
+                </button>
+                <button
+                  style={btn(windAttackDoubleMode ? '#4ecca3' : '#333', windAttackDoubleMode ? '#1a1a2e' : '#fff')}
+                  onClick={() => setWindAttackDoubleMode(true)}
+                >
+                  💨💨 Use 2 Wind cards
+                </button>
+              </div>
+            </div>
+          )}
           {tname && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Target: <b>{tname}</b></p>}
           {moveType === 'playBee' && beeDiscardCard && (
             <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Discard flower: <b><InlineCardLabel card={beeDiscardCard} /></b></p>
@@ -2706,8 +2745,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             {myHand.length === 0 ? (
               <span style={{ color: theme.muted, fontSize: 12 }}>Empty</span>
             ) : myHand.map((c, i) => {
-              const canCounterDrag = canStageWindCounterCard(c.id);
-              const canDrag = (myTurn && G.phase === 'action') || canCounterDrag;
+              const canDrag = myTurn && G.phase === 'action';
               const mid = (myHand.length - 1) / 2;
               return (
                 <div
@@ -2721,7 +2759,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                     selected={armedCardId === c.id || pickedCards.includes(c.id) || counterPickedCards.includes(c.id)}
                     draggable={canDrag}
                     dragging={draggingCardId === c.id}
-                    onClick={canDrag ? () => handleHandCardClick(c.id) : undefined}
+                    onClick={(myTurn && G.phase === 'action') || (isCounter && amTarget && inStage && !!G.pendingAction?.selectionKind)
+                      ? () => handleHandCardClick(c.id)
+                      : undefined}
                     onPointerDown={canDrag ? (event) => startCardPointerSession(c.id, event) : undefined}
                   />
                 </div>
