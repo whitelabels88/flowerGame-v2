@@ -16,6 +16,7 @@ import middleUiSlowGif from '../assets/garden/middle-ui-slow.gif';
 import middleUiFastGif from '../assets/garden/middle-ui-fast.gif';
 import swapLifeGif from '../assets/garden/swap-life.gif';
 import windBlowGif from '../assets/garden/wind-blow.gif';
+import naturalDisasterGif from '../assets/garden/natural-disaster.gif';
 import { MatchContext } from '../matchContext';
 
 const MOVE_LABELS: Record<string, string> = {
@@ -500,6 +501,12 @@ type WindFlight = {
 
 type CardPlayEffect = 'none' | 'trade-fate' | 'wind-blow';
 
+type GardenVisualEffect = {
+  key: string;
+  playerId: string;
+  type: 'natural-disaster';
+};
+
 type DragPreview = {
   cardId: string;
   x: number;
@@ -745,6 +752,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [windFlights, setWindFlights] = useState<WindFlight[]>([]);
   const [sceneFx, setSceneFx] = useState<'none' | 'eclipse' | 'reset'>('none');
   const [cardPlayFx, setCardPlayFx] = useState<CardPlayEffect>('none');
+  const [gardenVisualEffect, setGardenVisualEffect] = useState<GardenVisualEffect | null>(null);
   const [scenePulse, setScenePulse] = useState<string | null>(null);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
@@ -775,6 +783,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const previousDiscardCountRef = useRef<number>(G.discardPile.length);
   const previousGardenIdsRef = useRef<Record<string, string[]>>(snapshotGardenIds(G.players));
   const submitUnlockRef = useRef<number | null>(null);
+  const gardenVisualEffectTimerRef = useRef<number | null>(null);
   const awaitingMoveResolutionRef = useRef<{
     phase: GameState['phase'];
     logLength: number;
@@ -1297,6 +1306,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     const previousSnapshot = previousGardenIdsRef.current;
     const currentSnapshot = snapshotGardenIds(G.players);
     const lowerLog = latestLog.toLowerCase();
+    const removedCountsByPlayer = new Map<string, number>();
 
     const triggerCardPlayFx = (nextFx: CardPlayEffect) => {
       if (cardPlayFxTimerRef.current !== null) {
@@ -1309,6 +1319,17 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       }, 1000);
     };
 
+    const triggerGardenVisualEffect = (playerId: string, type: GardenVisualEffect['type']) => {
+      if (gardenVisualEffectTimerRef.current !== null) {
+        window.clearTimeout(gardenVisualEffectTimerRef.current);
+      }
+      setGardenVisualEffect({ key: `${type}-${playerId}-${G.log.length}`, playerId, type });
+      gardenVisualEffectTimerRef.current = window.setTimeout(() => {
+        setGardenVisualEffect(null);
+        gardenVisualEffectTimerRef.current = null;
+      }, 1000);
+    };
+
     const isWindLog = /wind/i.test(latestLog) && /(blew|blow|counter wind)/i.test(latestLog);
     if (isWindLog) {
       const removed = new Map<string, string>();
@@ -1318,7 +1339,10 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         const prevIds = new Set(previousSnapshot[player.id] ?? []);
         const currIds = new Set(currentSnapshot[player.id] ?? []);
         for (const id of previousSnapshot[player.id] ?? []) {
-          if (!currIds.has(id)) removed.set(id, player.id);
+          if (!currIds.has(id)) {
+            removed.set(id, player.id);
+            removedCountsByPlayer.set(player.id, (removedCountsByPlayer.get(player.id) ?? 0) + 1);
+          }
         }
         for (const id of currentSnapshot[player.id] ?? []) {
           if (!prevIds.has(id)) added.set(id, player.id);
@@ -1353,6 +1377,23 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         setWindFlights(flights);
         window.setTimeout(() => setWindFlights([]), 1100);
       }
+    } else {
+      for (const player of G.players) {
+        const currIds = new Set(currentSnapshot[player.id] ?? []);
+        for (const id of previousSnapshot[player.id] ?? []) {
+          if (!currIds.has(id)) {
+            removedCountsByPlayer.set(player.id, (removedCountsByPlayer.get(player.id) ?? 0) + 1);
+          }
+        }
+      }
+    }
+
+    if (/natural disaster|disaster/.test(lowerLog)) {
+      const attackedPlayerId = [...removedCountsByPlayer.entries()]
+        .sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (attackedPlayerId) {
+        triggerGardenVisualEffect(attackedPlayerId, 'natural-disaster');
+      }
     }
 
     if (/trade fate|swapped (their|the) entire hand|swap(?:ped)? .*whole hand|whole hand swap|swapped hands/.test(lowerLog)) {
@@ -1383,6 +1424,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     }
     if (cardPlayFxTimerRef.current !== null) {
       window.clearTimeout(cardPlayFxTimerRef.current);
+    }
+    if (gardenVisualEffectTimerRef.current !== null) {
+      window.clearTimeout(gardenVisualEffectTimerRef.current);
     }
   }, []);
 
@@ -2562,6 +2606,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             const tileMin = Math.max(68, 104 - Math.min(layout.totalFlowers * 3, 24));
             const gridCols = player.garden.sets.length > 0 ? `repeat(auto-fit, minmax(${tileMin}px, 1fr))` : '1fr';
             const targeting = activeGardenPlayerId === player.id || targetPlayer === player.id;
+            const gardenFx = gardenVisualEffect?.playerId === player.id ? gardenVisualEffect : null;
             return (
               <div
                 key={player.id}
@@ -2590,6 +2635,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                     accent2={isActive ? theme.accent2 : theme.accent}
                     accent3={targeting ? theme.accent : theme.accent2}
                   />
+                  {gardenFx?.type === 'natural-disaster' && (
+                    <div key={gardenFx.key} className="garden-visual-fx garden-visual-fx--natural-disaster" aria-hidden="true">
+                      <img src={naturalDisasterGif} alt="" className="garden-visual-fx__image" />
+                    </div>
+                  )}
                   {chatBubbles[player.id] && (
                     <div key={chatBubbles[player.id].key} className="garden-chat-bubble">
                       💬 {chatBubbles[player.id].text}

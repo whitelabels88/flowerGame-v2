@@ -23,7 +23,8 @@ interface LobbyPlayer {
 interface LobbyMatch {
   matchID: string;
   players?: LobbyPlayer[];
-  setupData?: { names?: string[] };
+  setupData?: { names?: string[]; roomName?: string };
+  gameover?: { winner?: string | number } | null;
   createdAt?: number;
   updatedAt?: number;
 }
@@ -71,8 +72,10 @@ function loadStoredMatch(): StoredMatch | null {
 
 export function Lobby({ onJoin }: Props) {
   const [name, setName] = useState('');
+  const [roomName, setRoomName] = useState('');
   const [matchID, setMatchID] = useState('');
   const [numPlayers, setNumPlayers] = useState(2);
+  const [joinByIdOpen, setJoinByIdOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [rooms, setRooms] = useState<LobbyMatch[]>([]);
@@ -86,10 +89,9 @@ export function Lobby({ onJoin }: Props) {
       const res = await fetch(`${SERVER}/games/${GAME}`);
       if (!res.ok) throw new Error(`Could not load rooms (${res.status})`);
       const data = await res.json() as LobbyListResponse;
-      const openRooms = (data.matches ?? [])
-        .filter(match => (match.players?.some(player => !player.name) ?? false))
+      const sortedRooms = (data.matches ?? [])
         .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-      setRooms(openRooms);
+      setRooms(sortedRooms);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -105,14 +107,40 @@ export function Lobby({ onJoin }: Props) {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const viewport = document.querySelector('meta[name="viewport"]');
+    const previousViewport = viewport?.getAttribute('content') ?? '';
+
+    viewport?.setAttribute(
+      'content',
+      'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover',
+    );
+
+    const preventGesture = (event: Event) => event.preventDefault();
+    document.addEventListener('gesturestart', preventGesture, { passive: false });
+
+    return () => {
+      document.removeEventListener('gesturestart', preventGesture);
+      if (viewport) viewport.setAttribute('content', previousViewport);
+    };
+  }, []);
+
   async function createMatch() {
     if (!name.trim()) { setError('Enter your name first'); return; }
     setLoading(true); setError('');
     try {
+      const trimmedName = name.trim();
+      const trimmedRoomName = roomName.trim();
       const res = await fetch(`${SERVER}/games/${GAME}/create`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ numPlayers, setupData: { names: [name.trim()] } }),
+        body:    JSON.stringify({
+          numPlayers,
+          setupData: {
+            names: [trimmedName],
+            roomName: trimmedRoomName || `${trimmedName}'s room`,
+          },
+        }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const { matchID: mid } = await res.json() as { matchID: string };
@@ -120,12 +148,12 @@ export function Lobby({ onJoin }: Props) {
       const joinRes = await fetch(`${SERVER}/games/${GAME}/${mid}/join`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ playerID: '0', playerName: name.trim() }),
+        body:    JSON.stringify({ playerID: '0', playerName: trimmedName }),
       });
       if (!joinRes.ok) throw new Error('Could not join as player 0');
       const { playerCredentials } = await joinRes.json() as { playerCredentials: string };
 
-      onJoin(mid, '0', name.trim(), playerCredentials);
+      onJoin(mid, '0', trimmedName, playerCredentials);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -167,18 +195,17 @@ export function Lobby({ onJoin }: Props) {
     }
   }
 
+  const openRooms = rooms.filter(match => !match.gameover && (match.players?.some(player => !player.name) ?? false));
+  const finishedRooms = rooms.filter(match => !!match.gameover);
+
   return (
     <div className="lobby-shell">
       <div className="lobby-card">
         {storedMatch && (
-          <div style={{
-            marginBottom: 16, padding: '12px 16px', borderRadius: 10,
-            background: 'rgba(78,204,163,0.15)', border: '1px solid rgba(78,204,163,0.4)',
-            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-          }}>
+          <div className="lobby-resume-banner">
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#4ecca3' }}>↩ Resume last game</div>
-              <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: '#7d5470', marginTop: 2 }}>
                 Match <span style={{ color: '#eee', fontFamily: 'monospace' }}>{storedMatch.matchID}</span> as <b style={{ color: '#eee' }}>{storedMatch.playerName}</b>
               </div>
             </div>
@@ -190,52 +217,72 @@ export function Lobby({ onJoin }: Props) {
             </button>
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
-          <div style={{ flex: 1, textAlign: 'center' }}>
+        <section className="lobby-hero">
+          <div className="lobby-hero-copy">
+            <div className="lobby-kicker">Bloom a room. Invite a table.</div>
             <h1 className="app-title" style={{ fontSize: 32, marginBottom: 4 }}>🌸 Flower Game</h1>
-            <p style={{ color: '#888', marginBottom: 20 }}>Multiplayer Card Game</p>
           </div>
-          <button
-            className="icon-btn"
-            onClick={() => setDesignerOpen(true)}
-            title="Upload custom card designs"
-            style={{ whiteSpace: 'nowrap' }}
-          >
-            🎨 Designs
-          </button>
-        </div>
+        </section>
 
         <div className="lobby-grid">
-          <div style={{ display: 'grid', gridTemplateRows: 'auto auto', gap: 10, minHeight: 0 }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#aaa', fontSize: 13 }}>Your Name</label>
+          <div className="lobby-actions-column">
+            <div className="lobby-identity-card">
+              <label className="lobby-field-label">Your Name</label>
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder="e.g. Alice"
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: 8,
-                  border: '1px solid #0f3460', background: '#0f3460',
-                  color: '#fff', fontSize: 15, marginBottom: 0,
-                  outline: 'none',
-                }}
+                className="lobby-input"
               />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, minHeight: 0 }}>
-              <div className="lobby-panel" style={{ background: '#0f3460', borderRadius: 12, padding: 14, marginBottom: 0, minWidth: 0 }}>
-                <h3 style={{ marginBottom: 8, color: '#e94560' }}>Create</h3>
-                <label style={{ display: 'block', marginBottom: 6, color: '#aaa', fontSize: 12 }}>
-                  Players
-                </label>
+            <div className="lobby-join-toggle">
+              <button
+                type="button"
+                className="lobby-toggle-button"
+                onClick={() => setJoinByIdOpen(open => !open)}
+                aria-expanded={joinByIdOpen}
+              >
+                <span>Join by ID</span>
+                <span className="lobby-toggle-arrow">{joinByIdOpen ? '−' : '+'}</span>
+              </button>
+
+              {joinByIdOpen && (
+                <div className="lobby-join-panel">
+                  <label className="lobby-field-label">Match ID</label>
+                  <input
+                    value={matchID}
+                    onChange={e => setMatchID(e.target.value)}
+                    placeholder="Paste ID"
+                    className="lobby-input"
+                  />
+                  <button
+                    onClick={() => void joinMatch()}
+                    disabled={loading}
+                    style={{ ...btn, background: '#4ecca3', color: '#1a1a2e', width: '100%', padding: '10px 14px', fontSize: 14 }}
+                  >
+                    {loading ? 'Joining…' : '🚪 Join'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="lobby-actions-grid">
+              <section className="lobby-panel lobby-action-card">
+                <div className="lobby-section-tag">Create</div>
+                <h3 style={{ marginBottom: 8, color: '#e94560' }}>Start a fresh garden</h3>
+                <label className="lobby-field-label">Room Name</label>
+                <input
+                  value={roomName}
+                  onChange={e => setRoomName(e.target.value)}
+                  placeholder="e.g. Petal Party"
+                  className="lobby-input"
+                />
+                <label className="lobby-field-label">Players</label>
                 <select
                   value={numPlayers}
                   onChange={e => setNumPlayers(Number(e.target.value))}
-                  style={{
-                    width: '100%', padding: '7px 10px', borderRadius: 8,
-                    border: '1px solid #1a1a2e', background: '#1a1a2e',
-                    color: '#fff', fontSize: 13, marginBottom: 10,
-                  }}
+                  className="lobby-input"
                 >
                   {[2, 3, 4, 5].map(n => (
                     <option key={n} value={n}>{n} Players</option>
@@ -244,138 +291,159 @@ export function Lobby({ onJoin }: Props) {
                 <button
                   onClick={createMatch}
                   disabled={loading}
-                  style={{ ...btn, background: '#e94560', color: '#fff', width: '100%', padding: '8px 14px', fontSize: 14 }}
+                  style={{ ...btn, background: '#e94560', color: '#fff', width: '100%', padding: '10px 14px', fontSize: 14 }}
                 >
                   {loading ? 'Creating…' : '🌱 Create'}
                 </button>
-              </div>
-
-              <div className="lobby-panel" style={{ background: '#0f3460', borderRadius: 12, padding: 14, marginBottom: 0, minWidth: 0 }}>
-                <h3 style={{ marginBottom: 8, color: '#4ecca3' }}>Join</h3>
-                <label style={{ display: 'block', marginBottom: 6, color: '#aaa', fontSize: 12 }}>Match ID</label>
-                <input
-                  value={matchID}
-                  onChange={e => setMatchID(e.target.value)}
-                  placeholder="Paste ID"
-                  style={{
-                    width: '100%', padding: '7px 10px', borderRadius: 8,
-                    border: '1px solid #1a1a2e', background: '#1a1a2e',
-                    color: '#fff', fontSize: 13, marginBottom: 10,
-                    outline: 'none',
-                  }}
-                />
-                <button
-                  onClick={() => void joinMatch()}
-                  disabled={loading}
-                  style={{ ...btn, background: '#4ecca3', color: '#1a1a2e', width: '100%', padding: '8px 14px', fontSize: 14 }}
-                >
-                  {loading ? 'Joining…' : '🚪 Join'}
-                </button>
-              </div>
+              </section>
             </div>
           </div>
 
-          <div className="lobby-panel" style={{ background: '#0f3460', borderRadius: 12, padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, gap: 12 }}>
-              <h3 style={{ margin: 0, color: '#ffd166' }}>Open Rooms</h3>
-              <span style={{ color: '#888', fontSize: 13 }}>
-                {loadingRooms ? 'Refreshing…' : `${rooms.length} open room${rooms.length === 1 ? '' : 's'}`}
-              </span>
-              <button
-                onClick={() => void loadRooms()}
-                disabled={loadingRooms}
-                style={{ ...btn, marginLeft: 'auto', background: '#1a1a2e', color: '#fff', padding: '8px 14px', fontSize: 13 }}
-              >
-                ↻ Refresh
-              </button>
-            </div>
+          <div className="lobby-right-column">
+            <section className="lobby-panel lobby-rooms-panel">
+              <div className="lobby-rooms-header">
+                <h3 style={{ margin: 0, color: '#ffd166' }}>Open Rooms</h3>
+                <span style={{ color: '#7d5470', fontSize: 13 }}>
+                  {loadingRooms ? 'Refreshing…' : `${openRooms.length} open room${openRooms.length === 1 ? '' : 's'}`}
+                </span>
+                <button
+                  onClick={() => void loadRooms()}
+                  disabled={loadingRooms}
+                  style={{ ...btn, marginLeft: 'auto', background: '#1a1a2e', color: '#fff', padding: '8px 14px', fontSize: 13 }}
+                >
+                  ↻ Refresh
+                </button>
+              </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflow: 'hidden' }}>
-              {rooms.length === 0 && !loadingRooms && (
-                <div style={{ color: '#888', fontSize: 13, padding: '8px 2px' }}>
-                  No open rooms right now. Create one and it’ll appear here.
-                </div>
-              )}
-
-              {rooms.slice(0, 2).map(room => {
-                const players = room.players ?? [];
-                const totalSeats = players.length;
-                const joinedSeats = players.filter(player => !!player.name).length;
-                const openSeats = totalSeats - joinedSeats;
-                const creator = players[0]?.name?.trim() || room.setupData?.names?.[0]?.trim() || 'Unknown';
-
-                return (
-                  <div
-                    key={room.matchID}
-                    className="lobby-room-card"
-                    style={{
-                      border: '1px solid #1a1a2e',
-                      background: '#16213e',
-                      borderRadius: 12,
-                      padding: 14,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                      <div style={{ fontWeight: 700, color: '#fff' }}>{creator}'s room</div>
-                      <div style={{ color: '#888', fontSize: 12, marginLeft: 'auto' }}>{formatTime(room.createdAt)}</div>
-                    </div>
-
-                    <div style={{ color: '#aaa', fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
-                      <div>Match ID: <span style={{ color: '#4ecca3', fontFamily: 'monospace' }}>{room.matchID}</span></div>
-                      <div>Players: {joinedSeats}/{totalSeats} joined · {openSeats} seat{openSeats === 1 ? '' : 's'} open</div>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 12 }}>
-                      {players.map((player, index) => {
-                        const occupied = !!player.name?.trim();
-                        return (
-                          <div
-                            key={player.id}
-                            style={{
-                              background: occupied ? '#0f3460' : '#1a1a2e',
-                              border: `1px solid ${occupied ? '#244a75' : '#333'}`,
-                              borderRadius: 10,
-                              padding: '8px 10px',
-                              fontSize: 12,
-                              color: occupied ? '#d7e3ff' : '#888',
-                            }}
-                          >
-                            <div style={{ marginBottom: 4, color: '#aaa' }}>Seat {index + 1}</div>
-                            <div style={{ fontWeight: 700, color: occupied ? '#fff' : '#888' }}>
-                              {occupied ? player.name : 'Empty'}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        onClick={() => {
-                          setMatchID(room.matchID);
-                          void joinMatch(room.matchID);
-                        }}
-                        disabled={loading || openSeats <= 0}
-                        style={{ ...btn, background: '#4ecca3', color: '#1a1a2e', flex: 1 }}
-                      >
-                        {loading ? 'Joining…' : 'Join Room'}
-                      </button>
-                      <button
-                        onClick={() => setMatchID(room.matchID)}
-                        style={{ ...btn, background: '#1a1a2e', color: '#fff', padding: '10px 16px' }}
-                      >
-                        Use ID
-                      </button>
-                    </div>
+              <div className="lobby-room-list">
+                {openRooms.length === 0 && !loadingRooms && (
+                  <div style={{ color: '#7d5470', fontSize: 13, padding: '8px 2px' }}>
+                    No open rooms right now. Create one and it’ll appear here.
                   </div>
-                );
-              })}
-            </div>
+                )}
+
+                {openRooms.map(room => {
+                  const players = room.players ?? [];
+                  const totalSeats = players.length;
+                  const joinedSeats = players.filter(player => !!player.name).length;
+                  const openSeats = totalSeats - joinedSeats;
+                  const creator = players[0]?.name?.trim() || room.setupData?.names?.[0]?.trim() || 'Unknown';
+                  const displayRoomName = room.setupData?.roomName?.trim() || `${creator}'s room`;
+
+                  return (
+                    <div
+                      key={room.matchID}
+                      className="lobby-room-card"
+                    >
+                      <div className="lobby-room-title-row">
+                        <div>
+                          <div className="lobby-room-name">{displayRoomName}</div>
+                          <div className="lobby-room-host">Hosted by {creator}</div>
+                        </div>
+                        <div style={{ color: '#7d5470', fontSize: 12, marginLeft: 'auto' }}>{formatTime(room.createdAt)}</div>
+                      </div>
+
+                      <div style={{ color: '#7d5470', fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
+                        <div>Match ID: <span style={{ color: '#6b2e55', fontFamily: 'monospace', fontWeight: 700 }}>{room.matchID}</span></div>
+                        <div>Players: {joinedSeats}/{totalSeats} joined · {openSeats} seat{openSeats === 1 ? '' : 's'} open</div>
+                      </div>
+
+                      <div className="lobby-room-seats">
+                        {players.map((player, index) => {
+                          const occupied = !!player.name?.trim();
+                          return (
+                            <div
+                              key={player.id}
+                              className={`lobby-seat-chip${occupied ? ' is-occupied' : ''}`}
+                            >
+                              <div style={{ marginBottom: 4, color: occupied ? '#7d5470' : '#ad8ba0' }}>Seat {index + 1}</div>
+                              <div style={{ fontWeight: 700, color: occupied ? '#6b2e55' : '#ad8ba0' }}>
+                                {occupied ? player.name : 'Empty'}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="lobby-room-actions">
+                        <button
+                          onClick={() => {
+                            setMatchID(room.matchID);
+                            void joinMatch(room.matchID);
+                          }}
+                          disabled={loading || openSeats <= 0}
+                          style={{ ...btn, background: '#4ecca3', color: '#1a1a2e', flex: 1 }}
+                        >
+                          {loading ? 'Joining…' : 'Join Room'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMatchID(room.matchID);
+                            setJoinByIdOpen(true);
+                          }}
+                          style={{ ...btn, background: '#1a1a2e', color: '#fff', padding: '10px 16px' }}
+                        >
+                          Use ID
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="lobby-panel lobby-rooms-panel lobby-rooms-panel--finished">
+              <div className="lobby-rooms-header">
+                <h3 style={{ margin: 0, color: '#ffd166' }}>Finished Rooms</h3>
+                <span style={{ color: '#7d5470', fontSize: 13 }}>
+                  {loadingRooms ? 'Refreshing…' : `${finishedRooms.length} finished room${finishedRooms.length === 1 ? '' : 's'}`}
+                </span>
+              </div>
+
+              <div className="lobby-room-list">
+                {finishedRooms.length === 0 && !loadingRooms && (
+                  <div style={{ color: '#7d5470', fontSize: 13, padding: '8px 2px' }}>
+                    No finished rooms yet.
+                  </div>
+                )}
+
+                {finishedRooms.map(room => {
+                  const players = room.players ?? [];
+                  const creator = players[0]?.name?.trim() || room.setupData?.names?.[0]?.trim() || 'Unknown';
+                  const displayRoomName = room.setupData?.roomName?.trim() || `${creator}'s room`;
+                  const winnerIdRaw = room.gameover?.winner;
+                  const winnerIndex = typeof winnerIdRaw === 'number'
+                    ? winnerIdRaw
+                    : typeof winnerIdRaw === 'string' && winnerIdRaw !== ''
+                      ? Number(winnerIdRaw)
+                      : NaN;
+                  const winnerPlayer = Number.isFinite(winnerIndex) ? players[winnerIndex] : undefined;
+                  const winnerLabel = winnerPlayer?.name?.trim() || (Number.isFinite(winnerIndex) ? `Player ${winnerIndex + 1}` : 'Unknown');
+
+                  return (
+                    <div key={room.matchID} className="lobby-room-card lobby-room-card--finished">
+                      <div className="lobby-room-title-row">
+                        <div>
+                          <div className="lobby-room-name">{displayRoomName}</div>
+                          <div className="lobby-room-host">Winner: {winnerLabel}</div>
+                        </div>
+                        <div style={{ color: '#7d5470', fontSize: 12, marginLeft: 'auto' }}>{formatTime(room.updatedAt ?? room.createdAt)}</div>
+                      </div>
+
+                      <div style={{ color: '#7d5470', fontSize: 13, lineHeight: 1.5 }}>
+                        <div>Match ID: <span style={{ color: '#6b2e55', fontFamily: 'monospace', fontWeight: 700 }}>{room.matchID}</span></div>
+                        <div>{players.length} player{players.length === 1 ? '' : 's'} seated</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           </div>
         </div>
 
         {error && (
-          <div style={{ marginTop: 16, padding: 12, background: '#4a1530', borderRadius: 8, color: '#ff6b8a', fontSize: 14 }}>
+          <div className="lobby-error-banner">
             ⚠️ {error}
           </div>
         )}
