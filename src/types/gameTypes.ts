@@ -55,7 +55,7 @@ export interface GardenSet {
   isSolid: boolean;
   /** Contains a Triple Rainbow card combined with other flowers */
   containsTripleRainbow: boolean;
-  /** Contains a Divine Flower — permanently invulnerable */
+  /** Contains a Divine Flower, or was promoted at 7 flowers — permanently invulnerable */
   isDivine: boolean;
 }
 

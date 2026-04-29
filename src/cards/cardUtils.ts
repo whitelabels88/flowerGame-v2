@@ -43,7 +43,7 @@ export function cardDetail(card: Card): string {
     if (card.color === 'divine') return 'Divine flower — creates a protected divine set.';
     if (card.color === 'triple_rainbow') return 'Triple rainbow — wildcard flower that can make combined sets solid.';
     if (card.color === 'rainbow') return 'Rainbow — wildcard flower; you choose its color when planting.';
-    return 'Flower card for building sets in a garden.';
+    return 'Flower card for building sets in a garden. A 7-flower set becomes Divine.';
   }
 
   switch (card.name) {
