@@ -8,7 +8,7 @@ import { Client }   from 'boardgame.io/react';
 import { SocketIO } from 'boardgame.io/multiplayer';
 import { FlowerBoard } from './board/FlowerBoard';
 import { Lobby } from './lobby/Lobby';
-import { MatchContext } from './matchContext';
+import { MatchContext, type MatchSeatPresence } from './matchContext';
 
 const DEFAULT_SERVER = 'https://flower.a133.mov';
 const SERVER = import.meta.env.VITE_GAME_SERVER_URL || DEFAULT_SERVER;
@@ -84,10 +84,15 @@ function loadStoredMatch(): MatchInfo | null {
 export function App() {
   const [match, setMatch] = useState<MatchInfo | null>(loadStoredMatch);
   const [playerNames, setPlayerNames] = useState<Record<string, string>>({});
+  const [seatPresence, setSeatPresence] = useState<Record<string, MatchSeatPresence>>({});
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    if (!match) { setPlayerNames({}); return; }
+    if (!match) {
+      setPlayerNames({});
+      setSeatPresence({});
+      return;
+    }
 
     let cancelled = false;
     const fetchNames = async () => {
@@ -97,11 +102,20 @@ export function App() {
         const data = await res.json() as MatchMetadataResponse;
         if (cancelled || !data.players) return;
         const next: Record<string, string> = {};
+        const nextPresence: Record<string, MatchSeatPresence> = {};
         for (const p of data.players) {
           const id = String(p.id);
-          next[id] = p.name?.trim() || `Player ${Number(id) + 1}`;
+          const fallbackName = `Player ${Number(id) + 1}`;
+          const trimmedName = p.name?.trim() || '';
+          const name = trimmedName || fallbackName;
+          next[id] = name;
+          nextPresence[id] = {
+            name,
+            occupied: Boolean(trimmedName),
+          };
         }
         setPlayerNames(next);
+        setSeatPresence(nextPresence);
       } catch { /* best-effort */ }
     };
 
@@ -166,6 +180,7 @@ export function App() {
         playerName:  match.playerName,
         credentials: match.credentials,
         server:      SERVER,
+        seatPresence,
         onLeave:     () => void leaveMatch(),
       }}>
         <BgioClient

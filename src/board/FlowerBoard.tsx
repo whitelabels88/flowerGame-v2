@@ -617,6 +617,15 @@ type FlowerBoardProps = BoardProps<GameState> & {
 
 // ── Chat types (used by InlineChat) ──────────────────────────
 
+const QUICK_CHAT_OPTIONS = [
+  { emoji: '🌸', text: '🌸' },
+  { emoji: '👍', text: '👍' },
+  { emoji: '🎉', text: '🎉' },
+  { emoji: '💨', text: '💨' },
+  { emoji: '👀', text: '👀' },
+  { emoji: '😭', text: '😭' },
+];
+
 interface ChatMessage {
   id: string;
   matchID: string;
@@ -629,6 +638,12 @@ interface ChatMessage {
 function formatChatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
+type LocalLogEntry = {
+  key: string;
+  text: string;
+  createdAt: number;
+};
 
 function formatElapsedClock(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -727,6 +742,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [pointerDragActive, setPointerDragActive] = useState(false);
   const [armedCardId, setArmedCardId] = useState<string | null>(null);
   const [arenaLogToast, setArenaLogToast] = useState<{ key: string; text: string } | null>(null);
+  const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [localLogEntries, setLocalLogEntries] = useState<LocalLogEntry[]>([]);
 
   // ── V2 drawer / modal state ────────────────────────────────
   const [chatOpen, setChatOpen] = useState(false);
@@ -748,6 +765,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const arenaLogToastTimerRef = useRef<number | null>(null);
   const cardPlayFxTimerRef = useRef<number | null>(null);
   const arenaLogToastPrimedRef = useRef(false);
+  const seatPresencePrimedRef = useRef(false);
+  const previousSeatPresenceRef = useRef(matchCtx?.seatPresence ?? {});
   const [discardFlyCard, setDiscardFlyCard] = useState<Card | null>(null);
   const [windFlights, setWindFlights] = useState<WindFlight[]>([]);
   const [sceneFx, setSceneFx] = useState<'none' | 'eclipse' | 'reset'>('none');
@@ -882,6 +901,13 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     }
     return rendered;
   };
+  const displayLogItems = useMemo(
+    () => [
+      ...localLogEntries.map(entry => ({ key: entry.key, text: entry.text })),
+      ...G.log.map((entry, index) => ({ key: `server-${index}`, text: displayLogEntry(entry) })),
+    ],
+    [G.log, localLogEntries],
+  );
   const isCounter = G.phase === 'counter';
   const amTarget  = G.pendingAction?.targetPlayerId === playerID;
   const inStage   = !!(ctx.activePlayers && playerID !== null && ctx.activePlayers[playerID!]);
@@ -959,6 +985,28 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     ? attackedGardenPlayer.garden.sets.find(set => set.id === attackedGardenSetId) ?? null
     : null;
   const attackedSetLabel = describeGardenSet(attackedGardenSet);
+
+  function showArenaToast(text: string, key: string) {
+    if (arenaLogToastTimerRef.current !== null) {
+      window.clearTimeout(arenaLogToastTimerRef.current);
+    }
+    setArenaLogToast({ key, text });
+    arenaLogToastTimerRef.current = window.setTimeout(() => {
+      setArenaLogToast(null);
+      arenaLogToastTimerRef.current = null;
+    }, 5000);
+  }
+
+  function pushLocalLogEntry(text: string) {
+    const entry = {
+      key: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      createdAt: Date.now(),
+    };
+    setLocalLogEntries(prev => [...prev, entry].slice(-18));
+    showArenaToast(text, entry.key);
+  }
+
   function resolvePlantTargetSetId(cardId: string, targetPlayerId: string, currentTargetSetId: string): string {
     const card = me?.hand.find(c => c.id === cardId);
     if (!card || !isFlower(card)) return currentTargetSetId;
@@ -1327,7 +1375,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       gardenVisualEffectTimerRef.current = window.setTimeout(() => {
         setGardenVisualEffect(null);
         gardenVisualEffectTimerRef.current = null;
-      }, 1000);
+      }, 2000);
     };
 
     const isWindLog = /wind/i.test(latestLog) && /(blew|blow|counter wind)/i.test(latestLog);
@@ -1488,6 +1536,29 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     };
   }, [matchCtx, chatOpen]);
 
+  useEffect(() => {
+    const currentSeatPresence = matchCtx?.seatPresence ?? {};
+    const previousSeatPresence = previousSeatPresenceRef.current;
+
+    if (!seatPresencePrimedRef.current) {
+      seatPresencePrimedRef.current = true;
+      previousSeatPresenceRef.current = currentSeatPresence;
+      return;
+    }
+
+    for (const seatId of new Set([...Object.keys(previousSeatPresence), ...Object.keys(currentSeatPresence)])) {
+      const before = previousSeatPresence[seatId];
+      const after = currentSeatPresence[seatId];
+      if (!before?.occupied && after?.occupied) {
+        pushLocalLogEntry(`${after.name} joined the room`);
+      } else if (before?.occupied && !after?.occupied) {
+        pushLocalLogEntry(`${before.name} left the room`);
+      }
+    }
+
+    previousSeatPresenceRef.current = currentSeatPresence;
+  }, [matchCtx?.seatPresence]);
+
   // ── Log unread tracking ────────────────────────────────────
   const prevLogLenRef = useRef(G.log.length);
   useEffect(() => {
@@ -1504,17 +1575,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       arenaLogToastPrimedRef.current = true;
       return;
     }
-    if (arenaLogToastTimerRef.current !== null) {
-      window.clearTimeout(arenaLogToastTimerRef.current);
-    }
-    setArenaLogToast({
-      key: `${G.log.length}-${latestEntry}`,
-      text: displayLogEntry(latestEntry),
-    });
-    arenaLogToastTimerRef.current = window.setTimeout(() => {
-      setArenaLogToast(null);
-      arenaLogToastTimerRef.current = null;
-    }, 5000);
+    showArenaToast(displayLogEntry(latestEntry), `${G.log.length}-${latestEntry}`);
   }, [G.log.length]);
 
   useEffect(() => () => {
@@ -1530,26 +1591,33 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     }
   }, [chatMessages.length]);
 
-  async function sendChatMessage() {
-    if (!matchCtx || !chatDraft.trim() || chatSending) return;
-    const text = chatDraft.trim();
+  async function sendChatText(text: string) {
+    if (!matchCtx || !text.trim() || chatSending) return false;
     setChatSending(true);
     setChatError('');
     try {
       const res = await fetch(`${matchCtx.server}/chat/${matchCtx.matchID}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerID: matchCtx.playerID, playerName: matchCtx.playerName, text }),
+        body: JSON.stringify({ playerID: matchCtx.playerID, playerName: matchCtx.playerName, text: text.trim() }),
       });
       const data = await res.json() as { error?: string; messages?: ChatMessage[] };
       if (!res.ok) throw new Error(data.error ?? 'Send failed');
-      setChatDraft('');
       setChatMessages(data.messages ?? []);
+      return true;
     } catch (e) {
       setChatError(e instanceof Error ? e.message : 'Error');
+      return false;
     } finally {
       setChatSending(false);
     }
+  }
+
+  async function sendChatMessage() {
+    const text = chatDraft.trim();
+    if (!text) return;
+    const sent = await sendChatText(text);
+    if (sent) setChatDraft('');
   }
 
   function runMove(fn: () => void) {
@@ -2506,6 +2574,37 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           </button>
         </div>
 
+        <div className="arena-quick-chat-anchor">
+          {quickChatOpen && (
+            <div className="arena-quick-chat-panel" style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
+              {QUICK_CHAT_OPTIONS.map(option => (
+                <button
+                  key={option.text}
+                  className="arena-quick-chat-option"
+                  type="button"
+                  title={`Send ${option.text}`}
+                  onClick={async () => {
+                    const sent = await sendChatText(option.text);
+                    if (sent) setQuickChatOpen(false);
+                  }}
+                >
+                  {option.emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className={`arena-quick-chat-btn ${quickChatOpen ? 'is-open' : ''}`}
+            style={{ color: theme.text, background: theme.panel }}
+            type="button"
+            onClick={() => setQuickChatOpen(open => !open)}
+            title={quickChatOpen ? 'Close quick chat' : 'Open quick chat'}
+            aria-label="Toggle quick chat"
+          >
+            <span aria-hidden="true">🙂</span>
+          </button>
+        </div>
+
         <div className={`v2-drawer v2-chat-drawer ${chatOpen ? 'is-open' : ''}`}
           style={{ background: theme.panelSoft }}>
           <div className="v2-drawer-content">
@@ -2551,11 +2650,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         <div className={`v2-drawer v2-log-drawer ${logOpen ? 'is-open' : ''}`}
           style={{ background: theme.panelSoft }}>
           <div className="v2-log-inner">
-            {G.log.length === 0
+            {displayLogItems.length === 0
               ? <div style={{ color: theme.muted, fontSize: 12, padding: 8 }}>No events yet.</div>
-              : [...G.log].reverse().map((entry, i) => (
-                <div key={i} className="v2-log-entry" style={{ color: theme.text }}>
-                  › {displayLogEntry(entry)}
+              : [...displayLogItems].reverse().map((entry) => (
+                <div key={entry.key} className="v2-log-entry" style={{ color: theme.text }}>
+                  › {entry.text}
                 </div>
               ))
             }
