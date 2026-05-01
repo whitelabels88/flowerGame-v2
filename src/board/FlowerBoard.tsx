@@ -1884,6 +1884,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   // ── Log unread tracking ────────────────────────────────────
   const prevLogLenRef = useRef(G.log.length);
+  const actionSheetRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (G.log.length > prevLogLenRef.current && !logOpen) {
       setLogUnread(u => u + (G.log.length - prevLogLenRef.current));
@@ -2020,6 +2021,16 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     ? Math.max(0, 4 - selectedWindStealCount)
     : 0;
   const moveInfo = moveDetails(effectiveMoveType);
+
+  useEffect(() => {
+    if (step !== 'pick-target' || effectiveMoveType !== 'playWindDouble' || !targetPlayer) return;
+    const sheet = actionSheetRef.current;
+    if (!sheet) return;
+    const raf = window.requestAnimationFrame(() => {
+      sheet.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [step, effectiveMoveType, targetPlayer]);
 
   function dispatch() {
     setError('');
@@ -2624,6 +2635,108 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             <button style={btn('#333')} onClick={() => setStep('pick-card')}>← Back</button>
             <button style={btn('#333')} onClick={resetAll}>✕ Cancel</button>
           </div>
+          {effectiveMoveType === 'playWindDouble' && (
+            showDoubleWindPrompt ? (
+              <div
+                style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 6,
+                  marginBottom: 14,
+                  background: 'linear-gradient(180deg, rgba(12,34,74,0.98), rgba(15,52,96,0.98))',
+                  border: '1px solid rgba(78, 204, 163, 0.55)',
+                  boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
+                  borderRadius: 14,
+                  padding: 14,
+                  backdropFilter: 'blur(10px)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <div>
+                    <div style={{ color: '#4ecca3', fontWeight: 800, fontSize: 14 }}>Double Wind target picker</div>
+                    <div style={{ color: '#e7ecff', fontSize: 12, marginTop: 3 }}>
+                      Choose which set(s) on <b style={{ color: '#fff' }}>{nameOf(selectedTargetPlayer!)}</b> should be blown.
+                    </div>
+                  </div>
+                  <button
+                    style={btn('#333')}
+                    onClick={() => {
+                      setTargetPlayer('');
+                      setTargetSet('');
+                      setWindExtraTargetSets([]);
+                    }}
+                  >
+                    Change player
+                  </button>
+                </div>
+                <div style={{ color: '#9fb0ff', fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>
+                  Double Wind currently covers <b style={{ color: '#fff' }}>{selectedWindStealCount}</b> / 4 flower(s).
+                  {remainingDoubleWindFlowers > 0
+                    ? ` Pick ${remainingDoubleWindFlowers} more flower${remainingDoubleWindFlowers === 1 ? '' : 's'} from another set if available.`
+                    : ' You have enough flowers selected.'}
+                </div>
+                <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                  Primary target set
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: targetSet ? 10 : 0 }}>
+                  {validSets.map(s => (
+                    <SetChip
+                      key={s.id}
+                      set={s}
+                      highlight={targetSet === s.id}
+                      onClick={() => {
+                        setTargetSet(s.id);
+                        setWindExtraTargetSets(prev => prev.filter(id => id !== s.id));
+                      }}
+                    />
+                  ))}
+                </div>
+                {targetSet && (
+                  <>
+                    {availableDoubleWindFollowUps.length > 0 && (
+                      <>
+                        <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                          Follow-up target sets
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 10 }}>
+                          {availableDoubleWindFollowUps.map(s => (
+                            <SetChip
+                              key={s.id}
+                              set={s}
+                              highlight={windExtraTargetSets.includes(s.id)}
+                              onClick={() => toggleDoubleWindTargetSet(s.id)}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        style={btn(canAdvanceFromTarget ? '#4ecca3' : '#333', canAdvanceFromTarget ? '#1a1a2e' : '#fff')}
+                        onClick={() => canAdvanceFromTarget && setStep('confirm')}
+                        disabled={!canAdvanceFromTarget}
+                      >
+                        Done targeting
+                      </button>
+                      <button
+                        style={btn('#333')}
+                        onClick={() => {
+                          setTargetSet('');
+                          setWindExtraTargetSets([]);
+                        }}
+                      >
+                        Clear set picks
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div style={{ marginBottom: 14, background: '#1a1a2e', borderRadius: 10, padding: 12, color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
+                Choose a target player first, and the Double Wind set picker will appear here at the top.
+              </div>
+            )
+          )}
           <div style={{ background: '#0f3460', borderRadius: 10, padding: 12, marginBottom: 12 }}>
             <div style={{ color: '#fff', fontWeight: 700, marginBottom: 6 }}>{moveLabel(effectiveMoveType)}</div>
             <p style={{ color: '#cbd5ff', fontSize: 13, margin: '0 0 8px 0' }}>{moveInfo.summary}</p>
@@ -2738,119 +2851,20 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               )}
             </div>
           )}
-          <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>
-            {moveType === 'playBee' ? 'Choose whose garden Bee will plant into:' : 'Who do you want to target?'}
-          </p>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-            {targetablePlayers.map(p => (
-              <button key={p.id} style={btn(targetPlayer === p.id ? '#e94560' : '#333')}
-                onClick={() => { setTargetPlayer(p.id); setTargetSet(''); setWindExtraTargetSets([]); }}>
-                {nameOf(p)} ({p.hand.length} cards, {p.garden.sets.length} sets)
-              </button>
-            ))}
-          </div>
-
-          {effectiveMoveType === 'playWindDouble' && (
-            showDoubleWindPrompt ? (
-              <div
-                style={{
-                  position: 'sticky',
-                  top: 8,
-                  zIndex: 6,
-                  marginBottom: 14,
-                  background: 'linear-gradient(180deg, rgba(12,34,74,0.98), rgba(15,52,96,0.98))',
-                  border: '1px solid rgba(78, 204, 163, 0.55)',
-                  boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
-                  borderRadius: 14,
-                  padding: 14,
-                  backdropFilter: 'blur(10px)',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                  <div>
-                    <div style={{ color: '#4ecca3', fontWeight: 800, fontSize: 14 }}>Double Wind target picker</div>
-                    <div style={{ color: '#e7ecff', fontSize: 12, marginTop: 3 }}>
-                      Choose which set(s) on <b style={{ color: '#fff' }}>{nameOf(selectedTargetPlayer!)}</b> should be blown.
-                    </div>
-                  </div>
-                  <button
-                    style={btn('#333')}
-                    onClick={() => {
-                      setTargetPlayer('');
-                      setTargetSet('');
-                      setWindExtraTargetSets([]);
-                    }}
-                  >
-                    Change player
+          {!showDoubleWindPrompt && (
+            <>
+              <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>
+                {moveType === 'playBee' ? 'Choose whose garden Bee will plant into:' : 'Who do you want to target?'}
+              </p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+                {targetablePlayers.map(p => (
+                  <button key={p.id} style={btn(targetPlayer === p.id ? '#e94560' : '#333')}
+                    onClick={() => { setTargetPlayer(p.id); setTargetSet(''); setWindExtraTargetSets([]); }}>
+                    {nameOf(p)} ({p.hand.length} cards, {p.garden.sets.length} sets)
                   </button>
-                </div>
-                <div style={{ color: '#9fb0ff', fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>
-                  Double Wind currently covers <b style={{ color: '#fff' }}>{selectedWindStealCount}</b> / 4 flower(s).
-                  {remainingDoubleWindFlowers > 0
-                    ? ` Pick ${remainingDoubleWindFlowers} more flower${remainingDoubleWindFlowers === 1 ? '' : 's'} from another set if available.`
-                    : ' You have enough flowers selected.'}
-                </div>
-                <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                  Primary target set
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: targetSet ? 10 : 0 }}>
-                  {validSets.map(s => (
-                    <SetChip
-                      key={s.id}
-                      set={s}
-                      highlight={targetSet === s.id}
-                      onClick={() => {
-                        setTargetSet(s.id);
-                        setWindExtraTargetSets(prev => prev.filter(id => id !== s.id));
-                      }}
-                    />
-                  ))}
-                </div>
-                {targetSet && (
-                  <>
-                    {availableDoubleWindFollowUps.length > 0 && (
-                      <>
-                        <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                          Follow-up target sets
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 10 }}>
-                          {availableDoubleWindFollowUps.map(s => (
-                            <SetChip
-                              key={s.id}
-                              set={s}
-                              highlight={windExtraTargetSets.includes(s.id)}
-                              onClick={() => toggleDoubleWindTargetSet(s.id)}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        style={btn(canAdvanceFromTarget ? '#4ecca3' : '#333', canAdvanceFromTarget ? '#1a1a2e' : '#fff')}
-                        onClick={() => canAdvanceFromTarget && setStep('confirm')}
-                        disabled={!canAdvanceFromTarget}
-                      >
-                        Done targeting
-                      </button>
-                      <button
-                        style={btn('#333')}
-                        onClick={() => {
-                          setTargetSet('');
-                          setWindExtraTargetSets([]);
-                        }}
-                      >
-                        Clear set picks
-                      </button>
-                    </div>
-                  </>
-                )}
+                ))}
               </div>
-            ) : (
-              <div style={{ marginBottom: 14, background: '#1a1a2e', borderRadius: 10, padding: 12, color: '#9fb0ff', fontSize: 12, lineHeight: 1.5 }}>
-                Choose a target player first, and the Double Wind set picker will open right away.
-              </div>
-            )
+            </>
           )}
 
           {showSetPicker && tgt && effectiveMoveType !== 'playWindDouble' && (
@@ -3477,7 +3491,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         {/* Action overlay — wizard steps slide over playfield */}
         {showActionOverlay && (
           <div className="v2-action-overlay" onClick={e => { if (e.target === e.currentTarget) resetAll(); }}>
-            <div className="v2-action-sheet" style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
+            <div ref={actionSheetRef} className="v2-action-sheet" style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
               <ActionPanel />
             </div>
           </div>
