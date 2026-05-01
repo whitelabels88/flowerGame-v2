@@ -820,6 +820,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [chosenColor, setChosenColor] = useState('');
   const [discardChoice, setDiscardChoice] = useState('');
   const [windAttackDoubleMode, setWindAttackDoubleMode] = useState(false);
+  const [windExtraTargetSets, setWindExtraTargetSets] = useState<string[]>([]);
   const [doubleHappinessMode, setDoubleHappinessMode] = useState<'take' | 'give' | ''>('');
   const [counterPickedCards, setCounterPickedCards] = useState<string[]>([]);
   const [error, setError] = useState('');
@@ -1048,7 +1049,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
 
   function resetAll() {
     setStep('menu'); setMoveType(''); setPickedCards([]);
-    setTargetPlayer(''); setTargetSet(''); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setWindAttackDoubleMode(false); setDoubleHappinessMode(''); setError('');
+    setTargetPlayer(''); setTargetSet(''); setWindExtraTargetSets([]); clearDropHover(); setChosenColor(''); setDiscardChoice(''); setWindAttackDoubleMode(false); setDoubleHappinessMode(''); setError('');
     dragSessionRef.current = null;
     setPointerDragActive(false);
     setArmedCardId(null); clearDragState();
@@ -1349,6 +1350,25 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     return true;
   }
 
+  function toggleDoubleWindTargetSet(setId: string) {
+    if (effectiveMoveType !== 'playWindDouble') {
+      setTargetSet(setId);
+      return;
+    }
+
+    if (!targetSet || targetSet === setId) {
+      setTargetSet(setId);
+      setWindExtraTargetSets(prev => prev.filter(id => id !== setId));
+      return;
+    }
+
+    setWindExtraTargetSets(prev =>
+      prev.includes(setId)
+        ? prev.filter(id => id !== setId)
+        : [...prev, setId],
+    );
+  }
+
   function stagePlayFromCard(cardId: string, targetPlayerId: string, targetSetId: string | '') {
     if (!me) return;
     const card = me.hand.find(c => c.id === cardId);
@@ -1361,6 +1381,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     setPickedCards([card.id]);
     setTargetPlayer(targetPlayerId);
     setTargetSet(resolvedTargetSetId);
+    setWindExtraTargetSets([]);
     setChosenColor('');
     setDiscardChoice('');
     setDoubleHappinessMode('');
@@ -1421,6 +1442,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   }, [moveType, windAttackDoubleMode]);
 
   useEffect(() => {
+    if (effectiveMoveType !== 'playWindDouble' && windExtraTargetSets.length > 0) {
+      setWindExtraTargetSets([]);
+    }
+  }, [effectiveMoveType, windExtraTargetSets.length]);
+
+  useEffect(() => {
     if (moveType !== 'doubleHappiness' && doubleHappinessMode) {
       setDoubleHappinessMode('');
     }
@@ -1438,7 +1465,26 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     const selectedSet = target?.garden.sets.find(set => set.id === targetSet);
     if (selectedSet && isValidTargetSetForMove(effectiveMoveType, selectedSet)) return;
     setTargetSet('');
+    setWindExtraTargetSets([]);
   }, [effectiveMoveType, G.players, targetPlayer, targetSet]);
+
+  useEffect(() => {
+    if (effectiveMoveType !== 'playWindDouble') return;
+    const target = G.players.find(player => player.id === targetPlayer);
+    if (!target) {
+      if (windExtraTargetSets.length > 0) setWindExtraTargetSets([]);
+      return;
+    }
+    const validIds = new Set(
+      target.garden.sets
+        .filter(set => set.id !== targetSet && isValidTargetSetForMove('playWindDouble', set))
+        .map(set => set.id),
+    );
+    const filtered = windExtraTargetSets.filter(setId => validIds.has(setId));
+    if (filtered.length !== windExtraTargetSets.length) {
+      setWindExtraTargetSets(filtered);
+    }
+  }, [effectiveMoveType, G.players, targetPlayer, targetSet, windExtraTargetSets]);
 
   useEffect(() => {
     const previousSnapshot = previousGardenStateRef.current;
@@ -1957,6 +2003,22 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     ? resolvePlantTargetSetId(pickedCards[0] ?? '', targetPlayer || playerID || '', targetSet)
     : targetSet;
   const selectedTargetSet = selectedTargetPlayer?.garden.sets.find(set => set.id === effectiveTargetSetId) ?? null;
+  const selectedWindTargetSetIds = effectiveMoveType === 'playWindDouble'
+    ? [targetSet, ...windExtraTargetSets].filter((setId): setId is string => !!setId)
+    : targetSet
+      ? [targetSet]
+      : [];
+  const selectedWindTargetSets = selectedWindTargetSetIds
+    .map(setId => selectedTargetPlayer?.garden.sets.find(set => set.id === setId) ?? null)
+    .filter((set): set is GardenSet => !!set);
+  const selectedWindStealCount = effectiveMoveType === 'playWindDouble'
+    ? Math.min(4, selectedWindTargetSets.reduce((sum, set) => sum + set.flowers.length, 0))
+    : selectedTargetSet
+      ? Math.min(1, selectedTargetSet.flowers.length)
+      : 0;
+  const remainingDoubleWindFlowers = effectiveMoveType === 'playWindDouble'
+    ? Math.max(0, 4 - selectedWindStealCount)
+    : 0;
   const moveInfo = moveDetails(effectiveMoveType);
 
   function dispatch() {
@@ -1970,6 +2032,17 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     if (moveType === 'playBee' && !targetSet && !chosenColor) {
       setError('Choose a color when Bee starts a new set');
       return;
+    }
+    if (effectiveMoveType === 'playWindDouble' && remainingDoubleWindFlowers > 0) {
+      const availableFollowUpSets = (selectedTargetPlayer?.garden.sets ?? []).filter(set =>
+        set.id !== targetSet
+        && !windExtraTargetSets.includes(set.id)
+        && isValidTargetSetForMove('playWindDouble', set),
+      );
+      if (availableFollowUpSets.length > 0) {
+        setError(`Choose ${remainingDoubleWindFlowers} more flower${remainingDoubleWindFlowers === 1 ? '' : 's'} worth of Wind target(s).`);
+        return;
+      }
     }
     const resolvedTargetSet = (moveType === 'plantOwn' || moveType === 'plantOpponent' || moveType === 'playBee')
       ? resolvePlantTargetSetId(c1, targetPlayer || playerID || '', targetSet)
@@ -2003,11 +2076,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       case 'playWindDouble':
         if (moveType === 'playWindSingle') {
           if (!autoDoubleWindCard) { setError('You need 2 Wind cards for the double Wind move.'); return; }
-          runMove(() => m.playWindDouble(c1, autoDoubleWindCard.id, targetPlayer, targetSet));
+          runMove(() => m.playWindDouble(c1, autoDoubleWindCard.id, targetPlayer, targetSet, windExtraTargetSets));
           break;
         }
         if (!c2) { setError('Select 2 Wind cards'); return; }
-        runMove(() => m.playWindDouble(c1, c2, targetPlayer, targetSet));
+        runMove(() => m.playWindDouble(c1, c2, targetPlayer, targetSet, windExtraTargetSets));
         break;
       case 'playBug':
         runMove(() => m.playBug(c1, targetPlayer, targetSet));
@@ -2523,6 +2596,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       const tgt = G.players.find(p => p.id === targetPlayer);
       const showSetPicker = ['playWindSingle','playWindDouble','playBug','naturalDisaster','playBee'].includes(moveType);
       const validSets = !tgt ? [] : tgt.garden.sets.filter(s => isValidTargetSetForMove(effectiveMoveType, s));
+      const availableDoubleWindFollowUps = effectiveMoveType === 'playWindDouble'
+        ? validSets.filter(s => s.id !== targetSet)
+        : [];
+      const remainingFollowUpChoices = availableDoubleWindFollowUps.filter(s => !windExtraTargetSets.includes(s.id));
+      const requiresMoreDoubleWindTargets = effectiveMoveType === 'playWindDouble'
+        && !!targetSet
+        && remainingDoubleWindFlowers > 0
+        && remainingFollowUpChoices.length > 0;
       const selectedDhCard = moveType === 'doubleHappiness'
         ? selectedCards.find(card => isPower(card, 'double_happiness')) ?? null
         : null;
@@ -2531,6 +2612,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         : [];
       const canAdvanceFromTarget = !!targetPlayer
         && (!requiresTargetSet || !!targetSet)
+        && !requiresMoreDoubleWindTargets
         && (moveType !== 'doubleHappiness'
           || (!!doubleHappinessMode && (doubleHappinessMode !== 'give' || doubleHappinessGiveCards.length === 2)));
 
@@ -2554,7 +2636,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
               ))}
             </div>
             <div style={{ color: '#9fb0ff', fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
-              {moveType === 'playBee' ? 'Next: choose whose garden Bee will plant into, then choose a set or start a new one.' : 'Next: choose a player, then finish any required target-set selection.'}
+              {moveType === 'playBee'
+                ? 'Next: choose whose garden Bee will plant into, then choose a set or start a new one.'
+                : effectiveMoveType === 'playWindDouble'
+                  ? 'Next: choose a player, pick the first Wind target set, then add more sets if you still need to reach 4 flowers.'
+                  : 'Next: choose a player, then finish any required target-set selection.'}
             </div>
           </div>
           {moveType === 'playWindSingle' && selectedPrimaryWindCard && (
@@ -2657,7 +2743,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
             {targetablePlayers.map(p => (
               <button key={p.id} style={btn(targetPlayer === p.id ? '#e94560' : '#333')}
-                onClick={() => { setTargetPlayer(p.id); setTargetSet(''); }}>
+                onClick={() => { setTargetPlayer(p.id); setTargetSet(''); setWindExtraTargetSets([]); }}>
                 {nameOf(p)} ({p.hand.length} cards, {p.garden.sets.length} sets)
               </button>
             ))}
@@ -2666,29 +2752,83 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
           {showSetPicker && tgt && (
             <div style={{ marginBottom: 14 }}>
               <p style={{ color: '#aaa', fontSize: 13, marginBottom: 6 }}>
-                {moveType === 'playBee' ? 'Choose a set to add to, or start a new set:' : 'Select their set:'}
+                {moveType === 'playBee'
+                  ? 'Choose a set to add to, or start a new set:'
+                  : effectiveMoveType === 'playWindDouble'
+                    ? 'Choose which set(s) Double Wind should blow from:'
+                    : 'Select their set:'}
               </p>
               {selectedTargetPlayer && (
                 <div style={{ color: '#9fb0ff', fontSize: 12, marginBottom: 8 }}>
                   Targeting <b style={{ color: '#fff' }}>{nameOf(selectedTargetPlayer)}</b>
-                  {selectedTargetSet && <span> · currently selected set has <b style={{ color: '#fff' }}>{selectedTargetSet.flowers.length}</b> flower(s)</span>}
+                  {selectedTargetSet && effectiveMoveType !== 'playWindDouble' && <span> · currently selected set has <b style={{ color: '#fff' }}>{selectedTargetSet.flowers.length}</b> flower(s)</span>}
                 </div>
               )}
               {validSets.length === 0 && moveType !== 'playBee' ? (
                 <p style={{ color: '#e94560', fontSize: 13 }}>No valid sets to target.</p>
               ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                  {validSets.map(s => (
-                    <SetChip key={s.id} set={s} highlight={targetSet === s.id}
-                      onClick={() => setTargetSet(s.id)} />
-                  ))}
-                  {moveType === 'playBee' && (
-                    <button style={{ ...btn(targetSet === '' ? '#4ecca3' : '#333', targetSet === '' ? '#1a1a2e' : '#fff'), marginTop: 6 }}
-                      onClick={() => setTargetSet('')}>
-                      ➕ Start new set
-                    </button>
+                <>
+                  {effectiveMoveType === 'playWindDouble' ? (
+                    <>
+                      <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                        Primary target set
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 10 }}>
+                        {validSets.map(s => (
+                          <SetChip
+                            key={s.id}
+                            set={s}
+                            highlight={targetSet === s.id}
+                            onClick={() => {
+                              setTargetSet(s.id);
+                              setWindExtraTargetSets(prev => prev.filter(id => id !== s.id));
+                            }}
+                          />
+                        ))}
+                      </div>
+                      {targetSet && (
+                        <>
+                          <div style={{ color: '#9fb0ff', fontSize: 12, marginBottom: 8 }}>
+                            Double Wind currently covers <b style={{ color: '#fff' }}>{selectedWindStealCount}</b> / 4 flower(s).
+                            {remainingDoubleWindFlowers > 0
+                              ? ` Pick ${remainingDoubleWindFlowers} more flower${remainingDoubleWindFlowers === 1 ? '' : 's'} from another set if available.`
+                              : ' You have enough flowers selected.'}
+                          </div>
+                          {availableDoubleWindFollowUps.length > 0 && (
+                            <>
+                              <div style={{ color: '#f4f1ff', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                                Follow-up target sets
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                                {availableDoubleWindFollowUps.map(s => (
+                                  <SetChip
+                                    key={s.id}
+                                    set={s}
+                                    highlight={windExtraTargetSets.includes(s.id)}
+                                    onClick={() => toggleDoubleWindTargetSet(s.id)}
+                                  />
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                      {validSets.map(s => (
+                        <SetChip key={s.id} set={s} highlight={targetSet === s.id}
+                          onClick={() => setTargetSet(s.id)} />
+                      ))}
+                      {moveType === 'playBee' && (
+                        <button style={{ ...btn(targetSet === '' ? '#4ecca3' : '#333', targetSet === '' ? '#1a1a2e' : '#fff'), marginTop: 6 }}
+                          onClick={() => setTargetSet('')}>
+                          ➕ Start new set
+                        </button>
+                      )}
+                    </div>
                   )}
-                </div>
+                </>
               )}
             </div>
           )}
@@ -2759,6 +2899,11 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             </div>
           )}
           {tname && <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Target: <b>{tname}</b></p>}
+          {effectiveMoveType === 'playWindDouble' && selectedWindTargetSets.length > 0 && (
+            <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>
+              Wind target sets: <b>{selectedWindTargetSets.map(set => describeGardenSet(set)).join(' + ')}</b>
+            </p>
+          )}
           {moveType === 'playBee' && beeDiscardCard && (
             <p style={{ fontSize: 13, color: '#ccc', marginBottom: 4 }}>Discard flower: <b><InlineCardLabel card={beeDiscardCard} /></b></p>
           )}

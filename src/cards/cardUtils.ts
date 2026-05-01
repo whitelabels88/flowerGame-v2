@@ -43,11 +43,11 @@ export function cardDetail(card: Card): string {
     if (card.color === 'divine') return 'Divine flower — creates a protected divine set.';
     if (card.color === 'triple_rainbow') return 'Triple rainbow — wildcard flower that can make combined sets solid.';
     if (card.color === 'rainbow') return 'Rainbow — wildcard flower; you choose its color when planting.';
-    return 'Flower card for building sets in a garden. Any 7-flower set becomes Divine, and 7 different normal single flowers auto-combine into a token while those flowers return to discard.';
+    return 'Flower card for building sets in a garden. Any 7-flower set becomes Divine, and any 7 different normal flower colors anywhere in your garden consume one of each color to create a token while those flowers return to discard.';
   }
 
   switch (card.name) {
-    case 'wind': return 'Wind card used for single or double Wind plays.';
+    case 'wind': return 'Wind card used for single or double Wind plays. Double Wind can keep blowing from extra target sets until it steals 4 flowers total.';
     case 'divine_protection': return 'Counter card — can defend against many blockable actions.';
     case 'bug': return 'Bug power card that targets a vulnerable garden set.';
     case 'bee': return 'Bee power card that plants a flower from the discard pile.';

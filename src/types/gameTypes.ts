@@ -57,7 +57,7 @@ export interface GardenSet {
   containsTripleRainbow: boolean;
   /** Contains a Divine Flower or an invulnerable token */
   isDivine: boolean;
-  /** Placeholder token formed by 7 different normal single flowers returning to discard */
+  /** Placeholder token formed when one of each normal flower color returns to discard */
   isToken?: boolean;
 }
 
@@ -111,6 +111,8 @@ export interface GameAction {
   targetCardIds?: string[];
   /** Target garden set ID */
   targetSetId?: string;
+  /** Additional target garden set IDs used by Double Wind follow-up steals */
+  targetSetIds?: string[];
   /** For wildcard colour resolution (bee, rainbow) */
   chosenColor?: FlowerColor;
   /** For Trade Present: the card the acting player is offering */
