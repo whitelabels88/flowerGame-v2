@@ -660,8 +660,15 @@ input, select, textarea { font-family: inherit; }
   align-items: flex-end;
   flex-wrap: nowrap;
   gap: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
 }
+
+.player-hand-row::-webkit-scrollbar { display: none; }
 
 .hand-card-fan {
   display: inline-flex;
@@ -921,7 +928,7 @@ input, select, textarea { font-family: inherit; }
   .player-hand-dock { bottom: 8px; padding: 8px 10px 10px; border-radius: 20px; }
   .player-hand-row {
     justify-content: flex-start;
-    overflow-x: hidden;
+    overflow-x: auto;
     padding-bottom: 2px;
   }
   .hand-card-fan {
@@ -2254,7 +2261,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .page.layout-compact .player-hand-row {
-  overflow-x: hidden;
+  overflow-x: auto;
   justify-content: flex-start;
   padding-bottom: 2px;
 }
@@ -2478,7 +2485,7 @@ input, select, textarea { font-family: inherit; }
   }
 
   .player-hand-row {
-    overflow-x: hidden;
+    overflow-x: auto;
     justify-content: flex-start;
     padding-bottom: 2px;
   }
