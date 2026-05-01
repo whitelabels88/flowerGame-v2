@@ -710,12 +710,12 @@ type FlowerBoardProps = BoardProps<GameState> & {
 // ── Chat types (used by InlineChat) ──────────────────────────
 
 const QUICK_CHAT_OPTIONS = [
-  { emoji: '🌸', text: '🌸' },
-  { emoji: '👍', text: '👍' },
-  { emoji: '🎉', text: '🎉' },
   { emoji: '🖕', text: '🖕' },
-  { emoji: '👀', text: '👀' },
+  { emoji: '☠️', text: '☠️' },
   { emoji: '😭', text: '😭' },
+  { emoji: '🤣', text: '🤣' },
+  { emoji: '🔥', text: '🔥' },
+  { emoji: '🫨', text: '🫨' },
 ];
 
 interface ChatMessage {
@@ -3157,6 +3157,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                   >
                     <span className="garden-mini-meta__name">
                       {nameOf(player)}
+                      <span className="garden-mini-meta__count" aria-hidden="true">
+                        🃏 {player.hand.length}
+                      </span>
                     </span>
                   </button>
                   <div
