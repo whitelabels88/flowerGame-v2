@@ -33,6 +33,11 @@ interface LobbyListResponse {
   matches?: LobbyMatch[];
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
 const btn: React.CSSProperties = {
   padding: '10px 24px',
   borderRadius: 8,
@@ -83,6 +88,14 @@ export function Lobby({ onJoin }: Props) {
   const [error, setError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
   const [storedMatch] = useState<StoredMatch | null>(loadStoredMatch);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installHintOpen, setInstallHintOpen] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIos = /iPad|iPhone|iPod/.test(ua);
+  const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+  const canShowInstallButton = !isStandalone && (!!deferredInstallPrompt || (isIos && isSafari));
 
   async function loadRooms() {
     setLoadingRooms(true);
@@ -125,6 +138,50 @@ export function Lobby({ onJoin }: Props) {
       if (viewport) viewport.setAttribute('content', previousViewport);
     };
   }, []);
+
+  useEffect(() => {
+    const syncStandalone = () => {
+      const standalone = window.matchMedia('(display-mode: standalone)').matches
+        || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+      setIsStandalone(standalone);
+      if (standalone) setInstallHintOpen(false);
+    };
+
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setDeferredInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    const onInstalled = () => {
+      setDeferredInstallPrompt(null);
+      setInstallHintOpen(false);
+      syncStandalone();
+    };
+
+    syncStandalone();
+    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    window.addEventListener('resize', syncStandalone);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+      window.removeEventListener('resize', syncStandalone);
+    };
+  }, []);
+
+  async function handleAddToHomeScreen() {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      try {
+        await deferredInstallPrompt.userChoice;
+      } finally {
+        setDeferredInstallPrompt(null);
+      }
+      return;
+    }
+    setInstallHintOpen(open => !open);
+  }
 
   async function createMatch() {
     if (!name.trim()) { setError('Enter your name first'); return; }
@@ -223,6 +280,23 @@ export function Lobby({ onJoin }: Props) {
             <div className="lobby-kicker">Bloom a room. Invite a table.</div>
             <h1 className="app-title" style={{ fontSize: 32, marginBottom: 4 }}>🌸 Flower Game</h1>
           </div>
+          {canShowInstallButton && (
+            <div className="lobby-install-anchor">
+              <button
+                type="button"
+                className="lobby-install-button"
+                onClick={() => void handleAddToHomeScreen()}
+              >
+                Add to Home Screen
+              </button>
+              {installHintOpen && !deferredInstallPrompt && (
+                <div className="lobby-install-hint" role="note">
+                  <div className="lobby-install-hint__title">Install on iPhone</div>
+                  <div>Tap Share in Safari, then choose Add to Home Screen.</div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <div className="lobby-grid">
