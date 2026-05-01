@@ -54,6 +54,7 @@ function formatTime(ts?: number): string {
 }
 
 const STORAGE_KEY = 'flower-game:match';
+const PLAYER_LIMITS = [2, 3, 4, 5, 6];
 
 interface StoredMatch {
   matchID: string;
@@ -284,7 +285,7 @@ export function Lobby({ onJoin }: Props) {
                   onChange={e => setNumPlayers(Number(e.target.value))}
                   className="lobby-input"
                 >
-                  {[2, 3, 4, 5].map(n => (
+                  {PLAYER_LIMITS.map(n => (
                     <option key={n} value={n}>{n} Players</option>
                   ))}
                 </select>

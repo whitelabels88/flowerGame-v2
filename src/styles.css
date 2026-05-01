@@ -1181,6 +1181,8 @@ input, select, textarea { font-family: inherit; }
   height: 100%;
   object-fit: contain;
   image-rendering: auto;
+  transform: scale(calc(1 + var(--proximity, 0) * 0.18));
+  transition: transform 150ms ease-out;
 }
 
 /* small variant for opponent hand backs */
@@ -1306,6 +1308,15 @@ input, select, textarea { font-family: inherit; }
   height: 100%;
   transform-origin: 50% 64%;
   will-change: transform;
+  transform: scale(calc(1 + var(--proximity, 0) * 0.04));
+  transition: transform 100ms ease-out;
+}
+
+.garden-goo-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 
 .garden-visual-fx {
@@ -1407,6 +1418,56 @@ input, select, textarea { font-family: inherit; }
 
 .garden-zone::-webkit-scrollbar { display: none; }
 
+.garden-cluster-backdrop {
+  position: absolute;
+  left: 50%;
+  top: 28px;
+  width: min(calc(100% - 30px), 168px);
+  max-width: min(calc(100% - 30px), 168px);
+  height: calc(100% - 42px);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.86;
+}
+
+.garden-cluster-backdrop__field {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 42%;
+}
+
+.garden-cluster-backdrop__blob {
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  width: var(--cluster-blob-size, 34px);
+  height: calc(var(--cluster-blob-size, 34px) * 0.8);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 34%, rgba(255,255,255,0.92), rgba(255,255,255,0.14) 28%, transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--cluster-tint, rgba(171, 214, 193, 0.44)) 90%, white 10%), var(--cluster-tint, rgba(171, 214, 193, 0.44)));
+  opacity: 0.9;
+  transform:
+    translate3d(calc(-50% + var(--cluster-x, 0px)), calc(-50% + var(--cluster-y, 0px)), 0)
+    rotate(var(--cluster-rot, 0deg))
+    scale(var(--cluster-scale, 1));
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--cluster-tint, rgba(171, 214, 193, 0.44)) 70%, transparent);
+}
+
+
+.garden-set-chip::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 38% 32%, rgba(255,255,255,0.52) 0%, rgba(255,255,255,0) 44%),
+    var(--cluster-tint, rgba(171, 214, 193, 0.72));
+  z-index: -1;
+  pointer-events: none;
+}
 
 .player-garden .garden-mini-meta,
 .player-garden .garden-quick-confirm {
@@ -1434,6 +1495,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .garden-grid {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -1446,6 +1508,7 @@ input, select, textarea { font-family: inherit; }
   padding-top: 8px;
   margin: 0 auto;
   transform: translateY(6px);
+  z-index: 2;
 }
 
 .garden-grid.is-empty {
@@ -1472,6 +1535,11 @@ input, select, textarea { font-family: inherit; }
   min-height: 22px;
   margin: 0 -9px -7px 0;
   z-index: 1;
+  transform:
+    translate3d(var(--cluster-x, 0px), var(--cluster-y, 0px), 0)
+    rotate(var(--cluster-rot, 0deg))
+    scale(var(--cluster-scale, 1));
+  transition: transform 220ms ease, filter 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
 }
 
 .garden-set-chip.size-lg {
@@ -1486,6 +1554,54 @@ input, select, textarea { font-family: inherit; }
 .garden-set-chip.is-highlighted,
 .garden-set-chip.is-drag-active {
   z-index: 3;
+}
+
+.garden-grid.is-simulating .garden-set-chip {
+  transition: none;
+  animation: none !important;
+}
+
+/* New chips during physics: fade in at their entry position */
+.garden-grid.is-simulating .garden-set-chip.is-new-growth {
+  animation: garden-physics-entry 500ms ease-out both !important;
+}
+
+@keyframes garden-physics-entry {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.garden-set-chip.is-being-grabbed {
+  cursor: grabbing !important;
+  transition: none !important;
+  animation: none !important;
+  z-index: 10;
+}
+
+.garden-grid.is-dragging .garden-set-chip {
+  transform:
+    translate3d(var(--cluster-x, 0px), var(--cluster-y, 0px), 0)
+    rotate(var(--cluster-rot, 0deg))
+    scale(calc(var(--cluster-scale, 1) * (1 + var(--proximity, 0) * 0.12)));
+  transition: transform 120ms ease-out, filter 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
+}
+
+.player-garden.is-settling .garden-cluster-backdrop__field,
+.garden-body.is-settling .garden-cluster-backdrop__field {
+  animation: garden-cluster-settle 900ms cubic-bezier(.18,.86,.2,1) both;
+}
+
+.player-garden.is-settling .garden-set-chip,
+.garden-body.is-settling .garden-set-chip {
+  will-change: transform, opacity, filter;
+  animation: garden-chip-settle 860ms cubic-bezier(.2,.88,.22,1) both;
+  animation-delay: var(--cluster-delay, 0ms);
+}
+
+.player-garden.is-settling .garden-set-chip.is-new-growth,
+.garden-body.is-settling .garden-set-chip.is-new-growth {
+  animation: garden-chip-growth 920ms cubic-bezier(.16,.92,.2,1) both;
+  animation-delay: 0ms;
 }
 
 .garden-empty-slot {
@@ -1518,9 +1634,99 @@ input, select, textarea { font-family: inherit; }
   transform: translate(-50%, -50%);
 }
 
+@keyframes garden-cluster-settle {
+  0% {
+    transform: translateX(-50%) translateY(-12px) scale(0.96);
+    opacity: 0.42;
+  }
+  55% {
+    transform: translateX(-50%) translateY(3px) scale(1.02);
+    opacity: 0.92;
+  }
+  100% {
+    transform: translateX(-50%) translateY(0) scale(1);
+    opacity: 0.86;
+  }
+}
+
+@keyframes garden-chip-settle {
+  0% {
+    transform:
+      translate3d(calc(var(--cluster-x, 0px) * 0.65), calc(var(--cluster-y, 0px) - 12px), 0)
+      rotate(calc(var(--cluster-rot, 0deg) * 0.3))
+      scale(calc(var(--cluster-scale, 1) * 0.95));
+    opacity: 0.82;
+  }
+  58% {
+    transform:
+      translate3d(calc(var(--cluster-x, 0px) + 3px), calc(var(--cluster-y, 0px) + 2px), 0)
+      rotate(calc(var(--cluster-rot, 0deg) * 1.08))
+      scale(calc(var(--cluster-scale, 1) * 1.02));
+    opacity: 1;
+  }
+  100% {
+    transform:
+      translate3d(var(--cluster-x, 0px), var(--cluster-y, 0px), 0)
+      rotate(var(--cluster-rot, 0deg))
+      scale(var(--cluster-scale, 1));
+    opacity: 1;
+  }
+}
+
+@keyframes garden-chip-growth {
+  0% {
+    transform:
+      translate3d(calc(var(--cluster-x, 0px) * 0.5), calc(var(--cluster-y, 0px) - 18px), 0)
+      rotate(calc(var(--cluster-rot, 0deg) * 0.2))
+      scale(calc(var(--cluster-scale, 1) * 0.72));
+    opacity: 0;
+    filter: brightness(1.18) saturate(1.22) var(--garden-set-glow, none);
+  }
+  45% {
+    transform:
+      translate3d(calc(var(--cluster-x, 0px) + 4px), calc(var(--cluster-y, 0px) + 1px), 0)
+      rotate(calc(var(--cluster-rot, 0deg) * 1.05))
+      scale(calc(var(--cluster-scale, 1) * 1.07));
+    opacity: 1;
+  }
+  100% {
+    transform:
+      translate3d(var(--cluster-x, 0px), var(--cluster-y, 0px), 0)
+      rotate(var(--cluster-rot, 0deg))
+      scale(var(--cluster-scale, 1));
+    opacity: 1;
+    filter: var(--garden-set-glow, none);
+  }
+}
+
 .garden-density-spacious .card-chip { margin: 1px; }
 .garden-density-comfy .card-chip { margin: 1px; }
 .garden-density-compact .card-chip { margin: 0; }
+
+@media (hover: hover) and (pointer: fine) and (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  .garden-grid--gooey-desktop .garden-cluster-backdrop__field {
+    filter: url("#garden-goo-filter");
+  }
+  .garden-grid--gooey-desktop {
+    filter: url("#garden-goo-filter-chips");
+    will-change: filter;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-garden.is-settling .garden-cluster-backdrop__field,
+  .garden-body.is-settling .garden-cluster-backdrop__field,
+  .player-garden.is-settling .garden-set-chip,
+  .garden-body.is-settling .garden-set-chip,
+  .player-garden.is-settling .garden-set-chip.is-new-growth,
+  .garden-body.is-settling .garden-set-chip.is-new-growth {
+    animation: none !important;
+  }
+
+  .garden-set-chip {
+    transition: none;
+  }
+}
 
 .page.theme-spring .card-chip {
   border-color: rgba(142, 107, 255, 0.28);
@@ -2399,17 +2605,23 @@ input, select, textarea { font-family: inherit; }
 /* ── Garden chat bubble ──────────────────────────────────────── */
 .garden-chat-bubble {
   position: absolute;
-  top: -42px; left: 50%;
+  top: 76px;
+  left: 50%;
   background: rgba(14,8,26,0.94);
   color: rgba(235,215,255,0.96);
-  font-size: 11px; line-height: 1.3;
-  padding: 5px 10px;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
+  padding: 5px 9px;
   border-radius: 14px;
   border: 1px solid rgba(140,80,200,0.3);
-  white-space: nowrap; max-width: 170px;
-  overflow: hidden; text-overflow: ellipsis;
+  white-space: normal;
+  max-width: min(120px, calc(100% - 42px));
+  overflow: hidden;
+  text-overflow: ellipsis;
   box-shadow: 0 4px 20px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,126,182,0.15);
-  pointer-events: none; z-index: 30;
+  pointer-events: none;
+  z-index: 12;
   animation: garden-bubble 4s ease forwards;
 }
 
