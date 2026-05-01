@@ -19,6 +19,7 @@ import windBlowGif from '../assets/garden/wind-blow.gif';
 import naturalDisasterGif from '../assets/garden/natural-disaster.gif';
 import { MatchContext } from '../matchContext';
 import { useAllGardensForceLayout } from './useForceLayout';
+import { gardenEllipseRadii, clampToEllipse } from './gardenBounds';
 
 const MOVE_LABELS: Record<string, string> = {
   plantOwn: '🌱 Plant in your garden',
@@ -374,7 +375,8 @@ function createGardenBlobPath(seed: number, totalFlowers: number, totalSets: num
     const noise = seededNoise(seed, i) - 0.5;
     const lobe = Math.sin(t * 2 + (seed % 7) * 0.1) * wobble * 0.65;
     const ripple = Math.cos(t * 3 - (seed % 5) * 0.1) * wobble * 0.2;
-    const r = baseRadius + lobe + ripple + noise * wobble * 0.4 + emphasis;
+    const minR = baseRadius * 0.72 + emphasis;
+    const r = Math.max(minR, baseRadius + lobe + ripple + noise * wobble * 0.4 + emphasis);
     return { x: 50 + Math.cos(t) * r * stretchX, y: 50 + Math.sin(t) * r * stretchY };
   });
 
@@ -632,7 +634,7 @@ function gardenClusterColor(set: GardenSet): string {
   return 'rgba(171, 214, 193, 0.64)';
 }
 
-function clusterMotionStyle(set: GardenSet, index: number, totalSetCount: number): React.CSSProperties {
+function clusterMotionStyle(set: GardenSet, index: number, totalSetCount: number, gardenW: number, gardenH: number, totalFlowers: number): React.CSSProperties {
   const seed = hashSeed(`${set.id}:${index}:${totalSetCount}`);
   const columns = totalSetCount >= 6 ? 3 : 2;
   const row = Math.floor(index / columns);
@@ -640,8 +642,18 @@ function clusterMotionStyle(set: GardenSet, index: number, totalSetCount: number
   const rowCenter = (columns - 1) / 2;
   const baseX = (column - rowCenter) * (columns === 3 ? 27 : 24);
   const baseY = (row * 22) - 8 - Math.min(12, totalSetCount * 1.1);
-  const x = baseX + clusterJitter(seed, 1, -5.5, 5.5);
-  const y = baseY + clusterJitter(seed, 2, -4.5, 4.5);
+  const rawX = baseX + clusterJitter(seed, 1, -5.5, 5.5);
+  const rawY = baseY + clusterJitter(seed, 2, -4.5, 4.5);
+
+  // The chip is positioned by BOTH flex layout and the transform. Clamp the total.
+  // Approximate flex center in garden-body coords (zone inset 28/10, padding-top 8, translateY 6, ~15px row height, ~11px chip half-height).
+  const chipHalfH = 11;
+  const flexYFromCenter = (28 + 8 + 6 + row * 15 + chipHalfH) - gardenH / 2;
+  const totalGooMargin = chipHalfH + 12;
+  const { rx, ry } = gardenEllipseRadii(totalFlowers, totalSetCount, 1.8, gardenW, gardenH, totalGooMargin);
+  const clampedAbs = clampToEllipse(rawX, rawY + flexYFromCenter, rx, ry);
+  const x = clampedAbs.x;
+  const y = clampedAbs.y - flexYFromCenter;
   const rotation = clusterJitter(seed, 3, -4.2, 4.2);
   const scale = 0.98 + clusterJitter(seed, 4, 0, 0.07);
   const delay = Math.round(clusterJitter(seed, 5, 0, 120));
@@ -736,15 +748,18 @@ function SetChip({
 }
 
 function GardenClusterBackdrop({
-  sets,
+  sets, gardenW, gardenH, totalFlowers,
 }: {
   sets: GardenSet[];
+  gardenW: number;
+  gardenH: number;
+  totalFlowers: number;
 }) {
   return (
     <div className="garden-cluster-backdrop" aria-hidden="true">
       <div className="garden-cluster-backdrop__field">
         {sets.map((set, index) => {
-          const style = clusterMotionStyle(set, index, sets.length);
+          const style = clusterMotionStyle(set, index, sets.length, gardenW, gardenH, totalFlowers);
           return <span key={set.id} className="garden-cluster-backdrop__blob" style={style} />;
         })}
       </div>
@@ -921,6 +936,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const [gardenVisualEffect, setGardenVisualEffect] = useState<GardenVisualEffect | null>(null);
   const [settlingGardens, setSettlingGardens] = useState<Record<string, GardenSettleState>>({});
   const [scenePulse, setScenePulse] = useState<string | null>(null);
+  const [arenaZoom, setArenaZoom] = useState(1);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
     height: typeof window !== 'undefined' ? window.innerHeight : 900,
@@ -942,6 +958,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const gardenSetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const handCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const arenaRef = useRef<HTMLDivElement | null>(null);
+  const arenaPinchZoomRef = useRef<{ startDistance: number; startZoom: number } | null>(null);
   const dragSessionRef = useRef<PointerDragSession | null>(null);
   const dragPreviewFrameRef = useRef<number | null>(null);
   const pendingDragPreviewRef = useRef<DragPreview | null>(null);
@@ -963,6 +980,60 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const gardenSettleTimersRef = useRef<Record<string, number>>({});
   const previousLogLengthRef = useRef<number>(G.log.length);
   const pendingLocalPlantSoundLogSkipsRef = useRef<number>(0);
+  const clampArenaZoom = (next: number) => Math.max(0.82, Math.min(1.75, Number(next.toFixed(2))));
+  const adjustArenaZoom = (delta: number) => {
+    setArenaZoom(current => clampArenaZoom(current + delta));
+  };
+  const resetArenaZoom = () => {
+    setArenaZoom(1);
+  };
+
+  useEffect(() => {
+    const arenaNode = arenaRef.current;
+    if (!arenaNode) return;
+
+    const touchDistance = (touches: TouchList) => {
+      if (touches.length < 2) return 0;
+      const [a, b] = [touches[0], touches[1]];
+      const dx = a.clientX - b.clientX;
+      const dy = a.clientY - b.clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) return;
+      arenaPinchZoomRef.current = {
+        startDistance: touchDistance(event.touches),
+        startZoom: arenaZoom,
+      };
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !arenaPinchZoomRef.current) return;
+      const currentDistance = touchDistance(event.touches);
+      const baseDistance = arenaPinchZoomRef.current.startDistance;
+      if (!baseDistance) return;
+      event.preventDefault();
+      const pinchScale = currentDistance / baseDistance;
+      setArenaZoom(clampArenaZoom(arenaPinchZoomRef.current.startZoom * pinchScale));
+    };
+
+    const clearPinch = () => {
+      arenaPinchZoomRef.current = null;
+    };
+
+    arenaNode.addEventListener('touchstart', onTouchStart, { passive: true });
+    arenaNode.addEventListener('touchmove', onTouchMove, { passive: false });
+    arenaNode.addEventListener('touchend', clearPinch);
+    arenaNode.addEventListener('touchcancel', clearPinch);
+
+    return () => {
+      arenaNode.removeEventListener('touchstart', onTouchStart);
+      arenaNode.removeEventListener('touchmove', onTouchMove);
+      arenaNode.removeEventListener('touchend', clearPinch);
+      arenaNode.removeEventListener('touchcancel', clearPinch);
+    };
+  }, [arenaZoom]);
   const awaitingMoveResolutionRef = useRef<{
     phase: GameState['phase'];
     logLength: number;
@@ -975,11 +1046,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const movesRef = useRef(m);
   movesRef.current = m;
 
-  // Physics-based positioning for garden sets
-  const gardenForcePositions = useAllGardensForceLayout(
-    G.players.map(p => ({ id: p.id, sets: p.garden.sets })),
-    pinnedSetPositions
-  );
+
 
   useEffect(() => {
     const unlockAudio = () => unlockMoveSfx();
@@ -1180,6 +1247,22 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [G.players, effectiveW, effectiveH, compactLayout, myPlayerIndex],
   );
+
+  // Physics-based positioning for garden sets
+  const gardenForcePositions = useAllGardensForceLayout(
+    arenaLayout.map(layout => {
+      const setCount = layout.player.garden.sets.length;
+      return {
+        id: layout.player.id,
+        sets: layout.player.garden.sets,
+        gardenW: Math.max(148, Math.min(216, layout.size)),
+        gardenH: Math.max(130, Math.min(210, 90 + setCount * 38)),
+        totalFlowers: layout.totalFlowers,
+      };
+    }),
+    pinnedSetPositions
+  );
+
   useEffect(() => {
     document.body.classList.remove('layout-compact');
     document.documentElement.classList.remove('layout-compact');
@@ -2887,7 +2970,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     <div className={shellClass} style={theme.pageStyle}>
       <svg className="garden-goo-defs" aria-hidden="true" focusable="false">
         <defs>
-          <filter id="garden-goo-filter" x="-50%" y="-50%" width="200%" height="200%">
+          <filter id="garden-goo-filter" x="-100%" y="-100%" width="300%" height="300%">
             <feGaussianBlur in="SourceGraphic" stdDeviation="7.5" result="blur" />
             <feColorMatrix
               in="blur"
@@ -2897,15 +2980,14 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             />
             <feBlend in="SourceGraphic" in2="goo" />
           </filter>
-          <filter id="garden-goo-filter-chips" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+          <filter id="garden-goo-filter-chips" x="-100%" y="-100%" width="300%" height="300%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
             <feColorMatrix
               in="blur"
               mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 14 -6"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8"
               result="goo"
             />
-            <feBlend in="SourceGraphic" in2="goo" />
           </filter>
         </defs>
       </svg>
@@ -3135,12 +3217,29 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
         )}
 
         {/* Arena */}
-        <div ref={arenaRef} className="board-arena board-arena-radial">
-          <div className={`arena-core ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''}`} aria-hidden="true">
-            <img className="arena-core-ui" src={centerUiGif} alt="" />
+        <div
+          ref={arenaRef}
+          className="board-arena board-arena-radial"
+          onWheel={event => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            adjustArenaZoom(event.deltaY < 0 ? 0.08 : -0.08);
+          }}
+        >
+          <div className="arena-zoom-controls" style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
+            <button type="button" className="arena-zoom-btn" onClick={() => adjustArenaZoom(-0.1)} aria-label="Zoom out arena">-</button>
+            <button type="button" className="arena-zoom-readout" onClick={resetArenaZoom} aria-label="Reset arena zoom">
+              {Math.round(arenaZoom * 100)}%
+            </button>
+            <button type="button" className="arena-zoom-btn" onClick={() => adjustArenaZoom(0.1)} aria-label="Zoom in arena">+</button>
           </div>
 
-          {arenaLayout.map(layout => {
+          <div className="arena-zoom-stage" style={{ ['--arena-zoom' as string]: String(arenaZoom) } as React.CSSProperties}>
+            <div className={`arena-core ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''}`} aria-hidden="true">
+              <img className="arena-core-ui" src={centerUiGif} alt="" />
+            </div>
+
+            {arenaLayout.map(layout => {
             const player = layout.player;
             const isActive = G.turnOrder[G.currentPlayerIndex] === player.id;
             const isMe = player.id === playerID;
@@ -3202,19 +3301,17 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                       💬 {chatBubbles[player.id].text}
                     </div>
                   )}
-                  <div className="garden-mini-meta" style={{
-                    position: 'absolute', top: 8, left: 0, right: 0, zIndex: 2,
-                    padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
-                  }}>
-                    <div
-                      style={{ fontWeight: 800, color: theme.text, fontSize: 11, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
-                      onClick={() => setPlayerInfoPlayerId(player.id)}
-                    >{nameOf(player)}</div>
-                    <div style={{ color: theme.muted, fontSize: 9, lineHeight: 1.1, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                      {isActive ? '▶' : '·'} {player.hand.length}🃏{layout.totalFlowers > 0 ? ` · ${layout.totalFlowers}🌸` : ''}
-                      {isGodsFav && ' 👑'}
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    className="garden-mini-meta"
+                    onClick={() => setPlayerInfoPlayerId(player.id)}
+                    title={`Open ${nameOf(player)} details`}
+                    aria-label={`Open ${nameOf(player)} details`}
+                  >
+                    <span className="garden-mini-meta__name">
+                      {nameOf(player)}
+                    </span>
+                  </button>
                   <div
                     className="garden-zone"
                     style={{ background: 'transparent', border: 'none' }}
@@ -3233,7 +3330,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                           </div>
                         : player.garden.sets.map((s, index) => {
                           const forcePos = gardenForcePositions.get(player.id)?.get(s.id);
-                          const baseStyle = clusterMotionStyle(s, index, player.garden.sets.length);
+                          const baseStyle = clusterMotionStyle(s, index, player.garden.sets.length, gardenSize, gardenHeight, layout.totalFlowers);
                           const clusterStyle = forcePos
                             ? { ...baseStyle, ['--cluster-x' as string]: `${forcePos.x.toFixed(1)}px`, ['--cluster-y' as string]: `${forcePos.y.toFixed(1)}px` }
                             : baseStyle;
@@ -3293,7 +3390,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 </div>
               </div>
             );
-          })}
+            })}
+          </div>
         </div>
 
         {/* Action overlay — wizard steps slide over playfield */}
