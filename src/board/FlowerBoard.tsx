@@ -18,8 +18,6 @@ import swapLifeGif from '../assets/garden/swap-life.gif';
 import windBlowGif from '../assets/garden/wind-blow.gif';
 import naturalDisasterGif from '../assets/garden/natural-disaster.gif';
 import { MatchContext } from '../matchContext';
-import { useAllGardensForceLayout } from './useForceLayout';
-import { gardenEllipseRadii, clampToEllipse } from './gardenBounds';
 
 const MOVE_LABELS: Record<string, string> = {
   plantOwn: '🌱 Plant in your garden',
@@ -312,6 +310,7 @@ function getSeasonTheme(season: GameState['season']): SeasonTheme {
 }
 
 function setSizeClass(set: GardenSet): string {
+  if (set.isToken) return 'size-token';
   const n = set.flowers.length;
   if (set.isDivine) return 'size-divine';
   if (n >= 6) return 'size-xl';
@@ -322,6 +321,7 @@ function setSizeClass(set: GardenSet): string {
 
 function describeGardenSet(set: GardenSet | null | undefined): string {
   if (!set) return 'a garden set';
+  if (set.isToken) return 'the token set';
   if (set.isDivine) return 'the Divine set';
   const anchorFlower = set.flowers.find(f => f.color !== 'rainbow' && f.color !== 'triple_rainbow') ?? set.flowers[0];
   const colorLabel = anchorFlower ? cardName(anchorFlower) : 'flower';
@@ -329,6 +329,7 @@ function describeGardenSet(set: GardenSet | null | undefined): string {
 }
 
 function gardenSetColor(set: GardenSet): FlowerColor | null {
+  if (set.isToken) return null;
   const anchorFlower = set.flowers.find(f => f.color !== 'rainbow' && f.color !== 'triple_rainbow');
   return anchorFlower ? anchorFlower.color : null;
 }
@@ -482,7 +483,7 @@ function computeArenaLayout(
     : Math.min(shortSide * 0.30, longSide * 0.22);
   const baseRadius = Math.max(compactLayout ? 84 : 120, Math.min(compactLayout ? 200 : 280, baseOrbit));
   const nodes = players.map((player, i) => {
-    const totalFlowers = player.garden.sets.reduce((sum, set) => sum + set.flowers.length, 0);
+    const totalFlowers = player.garden.sets.reduce((sum, set) => sum + (set.isToken ? 1 : set.flowers.length), 0);
     const totalSets = player.garden.sets.length;
     const rawSize = Math.max(compactLayout ? 106 : 132, Math.min(compactLayout ? 176 : 210, (compactLayout ? 126 : 150) + (totalFlowers * 2) + (totalSets * 8)));
     const size = rawSize * sizeScale;
@@ -605,6 +606,7 @@ function snapshotGardenState(players: Player[]): GardenSnapshot {
         set.isComplete ? 'c' : 'i',
         set.isSolid ? 's' : 'n',
         set.isDivine ? 'd' : 'n',
+        set.isToken ? 't' : 'n',
       ].join('|'),
     ]));
     return [player.id, {
@@ -612,61 +614,6 @@ function snapshotGardenState(players: Player[]): GardenSnapshot {
       setSignatures,
     }];
   }));
-}
-
-function clusterJitter(seed: number, salt: number, min: number, max: number): number {
-  const noise = seededNoise(seed, salt);
-  return min + ((max - min) * noise);
-}
-
-function gardenClusterColor(set: GardenSet): string {
-  const color = gardenSetColor(set);
-  if (set.isDivine) return 'rgba(255, 240, 174, 0.86)';
-  if (set.isSolid) return 'rgba(255, 214, 102, 0.78)';
-  if (color === 'red') return 'rgba(255, 88, 118, 0.72)';
-  if (color === 'orange') return 'rgba(255, 169, 82, 0.74)';
-  if (color === 'yellow') return 'rgba(255, 225, 102, 0.70)';
-  if (color === 'green') return 'rgba(106, 220, 128, 0.68)';
-  if (color === 'blue') return 'rgba(100, 186, 255, 0.68)';
-  if (color === 'purple') return 'rgba(176, 126, 255, 0.68)';
-  if (color === 'black') return 'rgba(100, 118, 138, 0.62)';
-  if (color === 'rainbow' || color === 'triple_rainbow') return 'rgba(255, 173, 245, 0.68)';
-  return 'rgba(171, 214, 193, 0.64)';
-}
-
-function clusterMotionStyle(set: GardenSet, index: number, totalSetCount: number, gardenW: number, gardenH: number, totalFlowers: number): React.CSSProperties {
-  const seed = hashSeed(`${set.id}:${index}:${totalSetCount}`);
-  const columns = totalSetCount >= 6 ? 3 : 2;
-  const row = Math.floor(index / columns);
-  const column = index % columns;
-  const rowCenter = (columns - 1) / 2;
-  const baseX = (column - rowCenter) * (columns === 3 ? 27 : 24);
-  const baseY = (row * 22) - 8 - Math.min(12, totalSetCount * 1.1);
-  const rawX = baseX + clusterJitter(seed, 1, -5.5, 5.5);
-  const rawY = baseY + clusterJitter(seed, 2, -4.5, 4.5);
-
-  // The chip is positioned by BOTH flex layout and the transform. Clamp the total.
-  // Approximate flex center in garden-body coords (zone inset 28/10, padding-top 8, translateY 6, ~15px row height, ~11px chip half-height).
-  const chipHalfH = 11;
-  const flexYFromCenter = (28 + 8 + 6 + row * 15 + chipHalfH) - gardenH / 2;
-  const totalGooMargin = chipHalfH + 12;
-  const { rx, ry } = gardenEllipseRadii(totalFlowers, totalSetCount, 1.8, gardenW, gardenH, totalGooMargin);
-  const clampedAbs = clampToEllipse(rawX, rawY + flexYFromCenter, rx, ry);
-  const x = clampedAbs.x;
-  const y = clampedAbs.y - flexYFromCenter;
-  const rotation = clusterJitter(seed, 3, -4.2, 4.2);
-  const scale = 0.98 + clusterJitter(seed, 4, 0, 0.07);
-  const delay = Math.round(clusterJitter(seed, 5, 0, 120));
-  const orbSize = 28 + Math.min(30, set.flowers.length * 5.2) + (set.isDivine ? 10 : set.isSolid ? 6 : 0);
-  return {
-    ['--cluster-x' as string]: `${x.toFixed(1)}px`,
-    ['--cluster-y' as string]: `${y.toFixed(1)}px`,
-    ['--cluster-rot' as string]: `${rotation.toFixed(2)}deg`,
-    ['--cluster-scale' as string]: scale.toFixed(3),
-    ['--cluster-delay' as string]: `${delay}ms`,
-    ['--cluster-tint' as string]: gardenClusterColor(set),
-    ['--cluster-blob-size' as string]: `${orbSize}px`,
-  } as React.CSSProperties;
 }
 
 // ── Shared styles ──────────────────────────────────────────────
@@ -700,8 +647,8 @@ function SetChip({
   clusterStyle?: React.CSSProperties;
   isNewGrowth?: boolean;
 }) {
-  const powerLabel = set.isDivine ? '👑' : set.isSolid ? '✦' : set.isComplete ? '✓' : '';
-  const glowColor = highlight ? '#e94560' : set.isSolid ? '#ffd700' : set.isComplete ? '#4ecca3' : null;
+  const powerLabel = set.isToken ? '' : set.isDivine ? '👑' : set.isSolid ? '✦' : set.isComplete ? '✓' : '';
+  const glowColor = highlight ? '#e94560' : set.isToken ? '#8ee0ff' : set.isSolid ? '#ffd700' : set.isComplete ? '#4ecca3' : null;
   const showBox = highlight || dragActive;
   const maxVisibleFlowers = sizeClass === 'size-xl' ? 6 : sizeClass === 'size-lg' ? 5 : 4;
   const visibleFlowers = set.flowers.slice(0, maxVisibleFlowers);
@@ -711,7 +658,7 @@ function SetChip({
       ref={setRef}
       onClick={onClick}
       onPointerDown={onPointerDown}
-      className={['garden-set-chip', sizeClass, showBox ? 'has-frame' : '', highlight ? 'is-highlighted' : '', dragActive ? 'is-drag-active' : '', isNewGrowth ? 'is-new-growth' : '']
+      className={['garden-set-chip', sizeClass, set.isToken ? 'is-token' : '', showBox ? 'has-frame' : '', highlight ? 'is-highlighted' : '', dragActive ? 'is-drag-active' : '', isNewGrowth ? 'is-new-growth' : '']
         .filter(Boolean)
         .join(' ')}
       style={{
@@ -723,7 +670,12 @@ function SetChip({
         ...clusterStyle,
       }}
     >
-      {visibleFlowers.map(f => {
+      {set.isToken && (
+        <span className="mini-token-placeholder" aria-label="token" title="Token">
+          💎
+        </span>
+      )}
+      {!set.isToken && visibleFlowers.map(f => {
         const art = flowerArt(f.color);
         return (
           <span key={f.id} title={f.color} className="mini-flower-token">
@@ -733,7 +685,7 @@ function SetChip({
           </span>
         );
       })}
-      {hiddenFlowerCount > 0 && (
+      {!set.isToken && hiddenFlowerCount > 0 && (
         <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.72)' }}>
           +{hiddenFlowerCount}
         </span>
@@ -743,26 +695,6 @@ function SetChip({
           {powerLabel}
         </span>
       )}
-    </div>
-  );
-}
-
-function GardenClusterBackdrop({
-  sets, gardenW, gardenH, totalFlowers,
-}: {
-  sets: GardenSet[];
-  gardenW: number;
-  gardenH: number;
-  totalFlowers: number;
-}) {
-  return (
-    <div className="garden-cluster-backdrop" aria-hidden="true">
-      <div className="garden-cluster-backdrop__field">
-        {sets.map((set, index) => {
-          const style = clusterMotionStyle(set, index, sets.length, gardenW, gardenH, totalFlowers);
-          return <span key={set.id} className="garden-cluster-backdrop__blob" style={style} />;
-        })}
-      </div>
     </div>
   );
 }
@@ -965,13 +897,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
   const proximityFrameRef = useRef<number | null>(null);
   const suppressCardClickRef = useRef<string | null>(null);
   const suppressSetClickRef = useRef<string | null>(null);
-  const dragSetRef = useRef<{
-    playerId: string; setId: string;
-    startClientX: number; startClientY: number;
-    startX: number; startY: number;
-    pointerId: number; thresholdCrossed: boolean;
-  } | null>(null);
-  const [pinnedSetPositions, setPinnedSetPositions] = useState<Map<string, Map<string, { x: number; y: number }>>>(new Map());
   const previousDiscardCountRef = useRef<number>(G.discardPile.length);
   const previousGardenIdsRef = useRef<Record<string, string[]>>(snapshotGardenIds(G.players));
   const previousGardenStateRef = useRef<GardenSnapshot>(snapshotGardenState(G.players));
@@ -1246,21 +1171,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
     () => computeArenaLayout(G.players, { width: effectiveW, height: effectiveH }, compactLayout, Math.max(0, myPlayerIndex)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [G.players, effectiveW, effectiveH, compactLayout, myPlayerIndex],
-  );
-
-  // Physics-based positioning for garden sets
-  const gardenForcePositions = useAllGardensForceLayout(
-    arenaLayout.map(layout => {
-      const setCount = layout.player.garden.sets.length;
-      return {
-        id: layout.player.id,
-        sets: layout.player.garden.sets,
-        gardenW: Math.max(148, Math.min(216, layout.size)),
-        gardenH: Math.max(130, Math.min(210, 90 + setCount * 38)),
-        totalFlowers: layout.totalFlowers,
-      };
-    }),
-    pinnedSetPositions
   );
 
   useEffect(() => {
@@ -1658,60 +1568,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
       window.removeEventListener('pointercancel', finishPointerSession);
     };
   }, [pointerDragActive, stagePlayFromCard]);
-
-  // Set-chip drag handling
-  useEffect(() => {
-    const onPointerMove = (event: PointerEvent) => {
-      const drag = dragSetRef.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const dx = event.clientX - drag.startClientX;
-      const dy = event.clientY - drag.startClientY;
-      if (!drag.thresholdCrossed) {
-        if (Math.hypot(dx, dy) < 5) return;
-        drag.thresholdCrossed = true;
-        const node = gardenSetRefs.current[gardenSetRefKey(drag.playerId, drag.setId)];
-        node?.classList.add('is-being-grabbed');
-      }
-      event.preventDefault();
-      const x = drag.startX + dx;
-      const y = drag.startY + dy;
-      setPinnedSetPositions(prev => {
-        const next = new Map(prev);
-        const playerMap = new Map(next.get(drag.playerId) ?? []);
-        playerMap.set(drag.setId, { x, y });
-        next.set(drag.playerId, playerMap);
-        return next;
-      });
-    };
-
-    const onPointerUp = (event: PointerEvent) => {
-      const drag = dragSetRef.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const node = gardenSetRefs.current[gardenSetRefKey(drag.playerId, drag.setId)];
-      node?.classList.remove('is-being-grabbed');
-      if (drag.thresholdCrossed) {
-        suppressSetClickRef.current = drag.setId;
-        window.setTimeout(() => {
-          if (suppressSetClickRef.current === drag.setId) suppressSetClickRef.current = null;
-        }, 0);
-      }
-      dragSetRef.current = null;
-      setPinnedSetPositions(prev => {
-        const next = new Map(prev);
-        next.delete(drag.playerId);
-        return next;
-      });
-    };
-
-    window.addEventListener('pointermove', onPointerMove, { passive: false });
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
-    };
-  }, []);
 
   useEffect(() => () => {
     if (dragPreviewFrameRef.current !== null) {
@@ -3226,14 +3082,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             adjustArenaZoom(event.deltaY < 0 ? 0.08 : -0.08);
           }}
         >
-          <div className="arena-zoom-controls" style={{ background: theme.panel, border: `1px solid ${theme.border}` }}>
-            <button type="button" className="arena-zoom-btn" onClick={() => adjustArenaZoom(-0.1)} aria-label="Zoom out arena">-</button>
-            <button type="button" className="arena-zoom-readout" onClick={resetArenaZoom} aria-label="Reset arena zoom">
-              {Math.round(arenaZoom * 100)}%
-            </button>
-            <button type="button" className="arena-zoom-btn" onClick={() => adjustArenaZoom(0.1)} aria-label="Zoom in arena">+</button>
-          </div>
-
           <div className="arena-zoom-stage" style={{ ['--arena-zoom' as string]: String(arenaZoom) } as React.CSSProperties}>
             <div className={`arena-core ${turnRemainingSec > 0 && turnRemainingSec <= 10 ? 'is-urgent' : ''}`} aria-hidden="true">
               <img className="arena-core-ui" src={centerUiGif} alt="" />
@@ -3257,9 +3105,8 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
             ].filter(Boolean).join(' ');
             const setCount = player.garden.sets.length;
             const gardenSize = Math.max(148, Math.min(216, layout.size));
-            const gardenHeight = Math.max(130, Math.min(210, 90 + setCount * 38));
-            const tileMin = Math.max(68, 104 - Math.min(layout.totalFlowers * 3, 24));
-            const gridCols = player.garden.sets.length > 0 ? `repeat(auto-fit, minmax(${tileMin}px, 1fr))` : '1fr';
+            const estimatedRows = Math.max(1, Math.ceil(setCount / (compactLayout ? 2 : 3)));
+            const gardenHeight = Math.max(136, 102 + estimatedRows * 34);
             const targeting = activeGardenPlayerId === player.id || targetPlayer === player.id;
             const gardenFx = gardenVisualEffect?.playerId === player.id ? gardenVisualEffect : null;
             const gardenSettle = settlingGardens[player.id] ?? null;
@@ -3317,7 +3164,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                     style={{ background: 'transparent', border: 'none' }}
                   >
                     <div
-                      className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''} ${player.garden.sets.length === 0 ? 'is-empty' : ''} ${player.garden.sets.length > 0 ? 'garden-grid--gooey-desktop' : ''} ${gardenForcePositions.has(player.id) ? 'is-simulating' : ''}`}
+                      className={`garden-grid ${gardenDensityClass(player.garden.sets.length)} ${activeGardenCardId ? 'is-dragging' : ''} ${player.garden.sets.length === 0 ? 'is-empty' : ''}`}
                     >
                       {player.garden.sets.length === 0
                         ? <div className="garden-empty-slot"
@@ -3328,18 +3175,12 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                               : undefined}>
                             Tap or drop a flower here
                           </div>
-                        : player.garden.sets.map((s, index) => {
-                          const forcePos = gardenForcePositions.get(player.id)?.get(s.id);
-                          const baseStyle = clusterMotionStyle(s, index, player.garden.sets.length, gardenSize, gardenHeight, layout.totalFlowers);
-                          const clusterStyle = forcePos
-                            ? { ...baseStyle, ['--cluster-x' as string]: `${forcePos.x.toFixed(1)}px`, ['--cluster-y' as string]: `${forcePos.y.toFixed(1)}px` }
-                            : baseStyle;
+                        : player.garden.sets.map((s) => {
                           return (
                           <SetChip
                             key={s.id}
                             set={s}
                             sizeClass={setSizeClass(s)}
-                            clusterStyle={clusterStyle}
                             isNewGrowth={gardenSettle?.changedSetIds.includes(s.id)}
                             highlight={(targeting && activeGardenSetId === s.id) || (player.id === attackedGardenPlayerId && s.id === attackedGardenSetId)}
                             dragActive={activeGardenCardId !== null && canDropTarget}
@@ -3350,19 +3191,6 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                               setTargetSet(s.id);
                               setMoveType('plantOwn');
                               setStep('pick-card');
-                            } : undefined}
-                            onPointerDown={isMe && !activeGardenCardId ? (e: React.PointerEvent) => {
-                              const fp = gardenForcePositions.get(player.id)?.get(s.id);
-                              const node = gardenSetRefs.current[gardenSetRefKey(player.id, s.id)];
-                              const startX = fp?.x ?? (parseFloat(node?.style.getPropertyValue('--cluster-x') ?? '0') || 0);
-                              const startY = fp?.y ?? (parseFloat(node?.style.getPropertyValue('--cluster-y') ?? '0') || 0);
-                              dragSetRef.current = {
-                                playerId: player.id, setId: s.id,
-                                startClientX: e.clientX, startClientY: e.clientY,
-                                startX, startY,
-                                pointerId: e.pointerId, thresholdCrossed: false,
-                              };
-                              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
                             } : undefined}
                           />
                           );
@@ -3573,7 +3401,7 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                 </div>
                 {infoPlayer.garden.sets.map(set => {
                   const setColor = gardenSetColor(set);
-                  const badge = set.isDivine ? '👑' : set.isSolid ? '💛' : set.isComplete ? '✅' : '';
+                  const badge = set.isToken ? '💎' : set.isDivine ? '👑' : set.isSolid ? '💛' : set.isComplete ? '✅' : '';
                   return (
                     <div key={set.id} style={{
                       display: 'flex', alignItems: 'center', gap: 6,
@@ -3581,9 +3409,9 @@ export function FlowerBoard({ G, ctx, moves, playerID, playerNames, isConnected 
                       background: theme.panelSoft, borderRadius: 8,
                       fontSize: 13,
                     }}>
-                      <span style={{ fontSize: 15 }}>{setColor ? (FLOWER_EMOJI[setColor] ?? '🌸') : '🌈'}</span>
+                      <span style={{ fontSize: 15 }}>{set.isToken ? '💎' : setColor ? (FLOWER_EMOJI[setColor] ?? '🌸') : '🌈'}</span>
                       <span style={{ flex: 1 }}>
-                        {set.flowers.map(f => FLOWER_EMOJI[f.color] ?? '🌸').join('')}
+                        {set.isToken ? 'Token set' : set.flowers.map(f => FLOWER_EMOJI[f.color] ?? '🌸').join('')}
                       </span>
                       {badge && <span>{badge}</span>}
                     </div>
